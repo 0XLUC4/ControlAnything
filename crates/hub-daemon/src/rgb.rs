@@ -6,6 +6,7 @@
 //!
 //! Default: a zone with no setting follows `DEFAULT_EFFECT` (the app drives all lighting).
 //! Only an explicit `Firmware` effect (old configs) leaves a device to its firmware.
+//! A device listed in `RgbConfig::disabled` is never driven (restored once if it was).
 
 use hub_core::Reading;
 use hub_core::ipc::{self, DaemonMsg};
@@ -61,7 +62,8 @@ impl Driven {
                 hub_rgb::effects::render(effect, zone.leds, elapsed, readings, config.brightness)
             })
             .collect();
-        match assemble(&info.zones, rendered) {
+        let frame = if config.disabled.contains(&info.id) { None } else { assemble(&info.zones, rendered) };
+        match frame {
             None => {
                 if self.software {
                     self.device.restore();
@@ -184,6 +186,47 @@ mod tests {
             assemble(&zones, vec![Some(vec![red]), None]),
             Some(vec![vec![red], vec![Rgb::BLACK; 3]])
         );
+    }
+
+    /// Counts the writes and restores of a fake device.
+    struct Fake {
+        info: RgbDeviceInfo,
+        frames: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        restores: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl RgbDevice for Fake {
+        fn info(&self) -> &RgbDeviceInfo {
+            &self.info
+        }
+        fn set_frame(&mut self, _: &[Vec<Rgb>]) -> Result<(), hub_core::HwError> {
+            self.frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        }
+        fn restore(&mut self) {
+            self.restores.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn disabled_device_is_restored_once_then_left_alone() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let fake = Fake {
+            info: RgbDeviceInfo { id: "d".into(), label: "D".into(), zones: vec![zone("z", 2)] },
+            frames: Default::default(),
+            restores: Default::default(),
+        };
+        let (frames, restores) = (fake.frames.clone(), fake.restores.clone());
+        let mut driven = Driven { device: Box::new(fake), software: false, last_error: None };
+        let mut config = RgbConfig::default();
+        driven.render(&config, &[], Duration::ZERO);
+        assert_eq!((frames.load(Relaxed), restores.load(Relaxed)), (1, 0));
+
+        config.disabled.insert("d".into());
+        for _ in 0..3 {
+            driven.render(&config, &[], Duration::ZERO);
+        }
+        assert_eq!((frames.load(Relaxed), restores.load(Relaxed)), (1, 1));
     }
 
     #[test]

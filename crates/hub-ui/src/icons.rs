@@ -32,6 +32,7 @@ icon_assets!(
         ChevronRight,
         Gauge,
         Lightbulb,
+        Microchip,
     ]
 );
 
@@ -70,7 +71,7 @@ mod tests {
 
     #[test]
     fn used_icons_are_embedded() {
-        for icon in [IconName::Fan, IconName::LayoutDashboard, IconName::Undo2] {
+        for icon in [IconName::Fan, IconName::LayoutDashboard, IconName::Undo2, IconName::Microchip] {
             assert!(matches!(HubAssets.load(&icon.path()), Ok(Some(_))));
         }
         assert!(matches!(HubAssets.load(BRAND_ICON), Ok(Some(_))));

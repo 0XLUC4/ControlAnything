@@ -18,7 +18,24 @@ Windows installers are published on the releases page: https://github.com/0XLUC4
 - **Lighting** page (RGB, MSI Mystic Light over USB HID): global brightness, sync (same effect everywhere) or
   per-zone effects: static, breathing, rainbow, wave, temperature (color follows a temperature source), load
   (color follows a sensor), plus "off" and "leave to firmware".
+- **RGB drivers** (native, no OpenRGB): MSI Mystic Light (USB HID), Corsair DDR5 memory (SMBus, via PawnIO),
+  and a generic **HID LampArray** driver (Windows Dynamic Lighting standard) that covers Logitech and other
+  compliant mice and keyboards. Devices with a generic HID name are labeled "{vendor} {kind}", e.g.
+  "Logitech Mouse".
+- **Devices** page: every detected device (lighting devices, fan channels, sensor counts per component).
+  A lighting device can be released from ControlAnything so its firmware or vendor software controls it again.
 - **Single instance**: launching the UI a second time exits immediately.
+
+### Supported hardware (validated)
+
+| Device | Id | Notes |
+|--------|----|-------|
+| MSI Mystic Light | `mystic-light/1462:7e06` | 3 zones |
+| 2x Corsair DDR5 | `corsair-dram/0x19`, `corsair-dram/0x1b` | 10 LEDs per module (keeps its last color when released) |
+| Logitech G502 X Plus (HID LampArray) | `lamparray/046d:4099/1.0` | Mouse, 8 lamps |
+| Logitech PRO X TKL (HID LampArray) | `lamparray/046d:c35b/1.0` | Keyboard, 93 lamps |
+| Nuvoton NCT6687D Super I/O | | Motherboard fans and sensors |
+| NVIDIA GPU | | GPU fan and sensors |
 
 ## Architecture
 
@@ -27,9 +44,9 @@ Windows installers are published on the releases page: https://github.com/0XLUC4
 | `hub-core` | Sensor/fan/RGB types, config, control engine (curves, hysteresis, failsafe), IPC protocol. No OS, no UI. |
 | `hub-backend-windows` | PawnIO: Intel CPU temperature (IntelMSR), Nuvoton NCT6687D Super I/O (LpcIO). |
 | `hub-backend-linux` | sysfs hwmon (`/sys/class/hwmon`). |
-| `hub-rgb` | Native RGB (no OpenRGB): effects engine and MSI Mystic Light driver. |
+| `hub-rgb` | Native RGB (no OpenRGB): effects engine, MSI Mystic Light and HID LampArray drivers. |
 | `hub-daemon` | `controlanythingd` binary: control loop, IPC server, Windows service. |
-| `hub-ui` | GPUI interface (gpui-kit): dashboard, fans, profiles, lighting. |
+| `hub-ui` | GPUI interface (gpui-kit): dashboard, fans, profiles, lighting, devices. |
 | `hub-app` | `controlanything` binary (the UI). |
 
 ## Requirements

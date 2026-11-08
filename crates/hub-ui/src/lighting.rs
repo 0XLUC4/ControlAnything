@@ -272,10 +272,24 @@ impl HubApp {
             return waiting(cx);
         };
         let rgb = draft.rgb.clone();
-        let devices = self.state.rgb_devices.clone();
-        if devices.is_empty() {
+        if self.state.rgb_devices.is_empty() {
             return muted(
                 "No RGB device detected (close MSI Center)",
+                cx,
+            )
+            .into_any_element();
+        }
+        // Released devices (see the Devices page) are left to their firmware: hidden here.
+        let devices: Vec<_> = self
+            .state
+            .rgb_devices
+            .iter()
+            .filter(|d| !rgb.disabled.contains(&d.id))
+            .cloned()
+            .collect();
+        if devices.is_empty() {
+            return muted(
+                "All lighting devices are released: enable them on the Devices page",
                 cx,
             )
             .into_any_element();

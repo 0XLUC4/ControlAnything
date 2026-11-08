@@ -38,6 +38,7 @@ pub enum Page {
     Dashboard,
     Fans,
     Lighting,
+    Devices,
     Settings,
 }
 
@@ -53,7 +54,7 @@ pub struct Controls {
 pub struct HubApp {
     pub state: HubState,
     pub prefs: Prefs,
-    page: Page,
+    pub page: Page,
     dashboard: Dashboard,
     pub fans: FansPage,
     pub lighting: LightingPage,
@@ -323,6 +324,7 @@ impl HubApp {
                     .child(item("Dashboard", IconName::LayoutDashboard, Page::Dashboard, cx))
                     .child(item("Fans", IconName::Fan, Page::Fans, cx))
                     .child(item("Lighting", IconName::Lightbulb, Page::Lighting, cx))
+                    .child(item("Devices", IconName::Microchip, Page::Devices, cx))
                     .child(item("Settings", IconName::Settings, Page::Settings, cx)),
             )
     }
@@ -452,6 +454,7 @@ impl Render for HubApp {
             Page::Dashboard => self.dashboard.render(&self.state, self.prefs.temperature_unit, cx),
             Page::Fans => self.render_fans(window, cx),
             Page::Lighting => self.render_lighting(window, cx),
+            Page::Devices => self.render_devices(cx),
             Page::Settings => self.render_settings(cx),
         };
         let theme = cx.theme();

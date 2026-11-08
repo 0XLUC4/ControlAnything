@@ -467,10 +467,7 @@ impl LampArray {
         let layout = read_layout(&device)?;
         let attributes = parse_attributes(&layout.attributes, &get_feature(&device, &layout, &layout.attributes)?)?;
         let lamp_count = usize::from(attributes.lamp_count);
-        let label = info
-            .product_string()
-            .filter(|name| !name.trim().is_empty())
-            .map_or_else(|| format!("LampArray {:04x}:{:04x}", info.vendor_id(), info.product_id()), String::from);
+        let label = device_label(info.product_string(), info.manufacturer_string(), info.vendor_id(), attributes.kind);
         let info = RgbDeviceInfo {
             id,
             label,
@@ -548,6 +545,46 @@ impl Drop for LampArray {
     }
 }
 
+/// HID string set by a generic driver (e.g. "HID VHF Driver" on Logitech), useless as a name.
+fn is_generic(text: Option<&str>) -> bool {
+    text.map(str::trim).is_none_or(|text| text.is_empty() || text.contains("VHF") || text.contains("Microsoft"))
+}
+
+/// LampArrayKind name (HID Usage Tables, page 0x59, usage 0x07).
+fn kind_name(kind: u32) -> &'static str {
+    match kind {
+        1 => "Keyboard",
+        2 => "Mouse",
+        3 => "Game Controller",
+        4 => "Peripheral",
+        5 => "Scene",
+        6 => "Notification",
+        7 => "Chassis",
+        8 => "Wearable",
+        9 => "Furniture",
+        10 => "Art",
+        _ => "Lighting",
+    }
+}
+
+/// Display name: the HID product string, or "{vendor} {kind}" when it is generic.
+fn device_label(product: Option<&str>, manufacturer: Option<&str>, vid: u16, kind: u32) -> String {
+    if let Some(product) = product.filter(|_| !is_generic(product)) {
+        return product.trim().to_string();
+    }
+    let vendor = match (manufacturer.filter(|_| !is_generic(manufacturer)), vid) {
+        (Some(name), _) => name.trim().to_string(),
+        (None, 0x046d) => "Logitech".into(),
+        (None, 0x1532) => "Razer".into(),
+        (None, 0x1b1c) => "Corsair".into(),
+        (None, 0x0b05) => "ASUS".into(),
+        (None, 0x1038) => "SteelSeries".into(),
+        (None, 0x0951 | 0x03f0) => "HyperX".into(),
+        (None, vid) => format!("VID {vid:04x}"),
+    };
+    format!("{vendor} {}", kind_name(kind))
+}
+
 /// True for a HID interface exposing the LampArray application collection.
 pub fn is_lamp_array(info: &hidapi::DeviceInfo) -> bool {
     info.usage_page() == USAGE_PAGE && info.usage() == USAGE_LAMP_ARRAY
@@ -623,6 +660,16 @@ mod tests {
 
     const RED: Rgb = Rgb::new(255, 0, 0);
     const BLUE: Rgb = Rgb::new(0, 0, 255);
+
+    #[test]
+    fn generic_product_names_use_vendor_and_kind() {
+        assert_eq!(device_label(Some("HID VHF Driver"), Some("Logitech"), 0x046d, 2), "Logitech Mouse");
+        assert_eq!(device_label(Some("HID VHF Driver"), None, 0x046d, 1), "Logitech Keyboard");
+        assert_eq!(device_label(Some(" "), Some("Microsoft"), 0x1532, 3), "Razer Game Controller");
+        assert_eq!(device_label(None, Some("Acme"), 0x1234, 7), "Acme Chassis");
+        assert_eq!(device_label(None, None, 0x1234, 0), "VID 1234 Lighting");
+        assert_eq!(device_label(Some("Sample Lamp "), None, 0x1234, 1), "Sample Lamp");
+    }
 
     #[test]
     fn descriptor_report_ids_and_sizes() {

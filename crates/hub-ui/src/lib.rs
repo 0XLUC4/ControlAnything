@@ -7,6 +7,7 @@ mod cards;
 mod chart;
 mod curve_editor;
 mod dashboard;
+mod devices;
 mod fans;
 mod hotkeys;
 mod icons;

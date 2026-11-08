@@ -1,6 +1,6 @@
 //! RGB lighting contract: devices, zones, effects.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -86,11 +86,14 @@ pub struct RgbConfig {
     pub sync: Option<Effect>,
     /// Per-zone effect, key `"{device_id}/{zone_id}"`; missing = [`DEFAULT_EFFECT`].
     pub zones: BTreeMap<String, Effect>,
+    /// Device ids left alone by the app (firmware or vendor software keeps control).
+    #[serde(default)]
+    pub disabled: BTreeSet<String>,
 }
 
 impl Default for RgbConfig {
     fn default() -> Self {
-        Self { brightness: 100, sync: None, zones: BTreeMap::new() }
+        Self { brightness: 100, sync: None, zones: BTreeMap::new(), disabled: BTreeSet::new() }
     }
 }
 
@@ -213,6 +216,7 @@ sync = { effect = "rainbow", period_ms = 5000 }
         let config = Config::from_toml(text).expect("parse");
         assert_eq!(config.rgb.brightness, 80);
         assert_eq!(config.rgb.sync, Some(Effect::Rainbow { period_ms: 5000 }));
+        assert!(config.rgb.disabled.is_empty());
 
         let mut config = Config::default();
         config.rgb.sync = Some(Effect::Static { color: Rgb::new(1, 2, 3) });
@@ -223,6 +227,7 @@ sync = { effect = "rainbow", period_ms = 5000 }
         zones.insert("d/z2".into(), temp(TempSource::Average { ids: vec!["a".into(), "b".into()] }, 30.0, 80.0));
         zones.insert("d/z3".into(), Effect::Load { sensor: "cpu/load".into(), low: Rgb::BLACK, high: Rgb::WHITE });
         zones.insert("d/z4".into(), Effect::Breathing { color: Rgb::WHITE, period_ms: 2000 });
+        config.rgb.disabled.insert("lamparray/046d:4099/1.0".into());
         config.validate().expect("valid");
         let text = config.to_toml().expect("serialization");
         assert_eq!(Config::from_toml(&text).expect("parse"), config, "{text}");
