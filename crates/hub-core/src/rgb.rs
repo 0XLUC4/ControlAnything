@@ -89,11 +89,20 @@ pub struct RgbConfig {
     /// Device ids left alone by the app (firmware or vendor software keeps control).
     #[serde(default)]
     pub disabled: BTreeSet<String>,
+    /// Per-device brightness 0..=100 %, scaled by `brightness`; missing = 100.
+    #[serde(default)]
+    pub device_brightness: BTreeMap<String, u8>,
 }
 
 impl Default for RgbConfig {
     fn default() -> Self {
-        Self { brightness: 100, sync: None, zones: BTreeMap::new(), disabled: BTreeSet::new() }
+        Self {
+            brightness: 100,
+            sync: None,
+            zones: BTreeMap::new(),
+            disabled: BTreeSet::new(),
+            device_brightness: BTreeMap::new(),
+        }
     }
 }
 
@@ -101,6 +110,9 @@ impl RgbConfig {
     /// Normalizes the RGB settings (bounds) and rejects inconsistent effects.
     pub fn validate(&mut self) -> Result<(), crate::config::ConfigError> {
         self.brightness = self.brightness.min(100);
+        for level in self.device_brightness.values_mut() {
+            *level = (*level).min(100);
+        }
         if let Some(effect) = &mut self.sync {
             effect.validate().map_err(|e| invalid(format!("synced effect: {e}")))?;
         }
@@ -108,6 +120,12 @@ impl RgbConfig {
             effect.validate().map_err(|e| invalid(format!("zone \"{zone}\": {e}")))?;
         }
         Ok(())
+    }
+
+    /// Effective brightness of a device: global x per-device level, 0..=100.
+    pub fn brightness_for(&self, device_id: &str) -> u8 {
+        let device = self.device_brightness.get(device_id).copied().unwrap_or(100).min(100);
+        (u16::from(self.brightness.min(100)) * u16::from(device) / 100) as u8
     }
 }
 
@@ -183,6 +201,13 @@ mod tests {
         assert_eq!(cfg.zones["d/z1"], Effect::Rainbow { period_ms: 200 });
         assert_eq!(cfg.zones["d/z2"], Effect::Breathing { color: Rgb::WHITE, period_ms: 60_000 });
         assert_eq!(cfg.zones["d/z3"], Effect::Wave { colors: vec![Rgb::WHITE], period_ms: 200 });
+        let mut cfg = RgbConfig { brightness: 50, ..RgbConfig::default() };
+        cfg.device_brightness.insert("d".into(), 200);
+        cfg.validate().expect("valid");
+        assert_eq!(cfg.device_brightness["d"], 100);
+        cfg.device_brightness.insert("d".into(), 40);
+        assert_eq!(cfg.brightness_for("d"), 20);
+        assert_eq!(cfg.brightness_for("other"), 50);
     }
 
     #[test]
@@ -228,6 +253,7 @@ sync = { effect = "rainbow", period_ms = 5000 }
         zones.insert("d/z3".into(), Effect::Load { sensor: "cpu/load".into(), low: Rgb::BLACK, high: Rgb::WHITE });
         zones.insert("d/z4".into(), Effect::Breathing { color: Rgb::WHITE, period_ms: 2000 });
         config.rgb.disabled.insert("lamparray/046d:4099/1.0".into());
+        config.rgb.device_brightness.insert("d".into(), 60);
         config.validate().expect("valid");
         let text = config.to_toml().expect("serialization");
         assert_eq!(Config::from_toml(&text).expect("parse"), config, "{text}");

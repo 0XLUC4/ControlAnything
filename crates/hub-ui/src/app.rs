@@ -6,13 +6,14 @@ use std::time::{Duration, Instant};
 
 use async_channel::{Receiver, Sender};
 use gpui_kit::assets::IconName;
+use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
-use gpui_kit::component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
+use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _, StyledExt as _, TitleBar, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, TitleBar, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -21,9 +22,10 @@ use gpui_kit::{
     img, px,
 };
 use hub_core::ipc::{ClientMsg, DaemonMsg};
+use hub_core::{Device, SensorKind};
 
 use crate::alerts::{Alerts, notify};
-use crate::dashboard::Dashboard;
+use crate::dashboard::{Dashboard, find_kind};
 use crate::fans::{FanControls, FansPage};
 use crate::hotkeys::{Hotkeys, profile_for_slot};
 use crate::icons::BRAND_ICON;
@@ -31,7 +33,8 @@ use crate::lighting::{LightingControls, LightingPage};
 use crate::prefs::Prefs;
 use crate::state::{HubState, Notice};
 use crate::tray::{Command, Tray};
-use crate::widgets::{GREEN, RED, RADIUS, solid_tag};
+use crate::updater::{self, UpdateState};
+use crate::widgets::{GREEN, RADIUS, RED, solid_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -39,6 +42,9 @@ pub enum Page {
     Fans,
     Lighting,
     Devices,
+    Audio,
+    Network,
+    Automations,
     Settings,
 }
 
@@ -55,9 +61,19 @@ pub struct HubApp {
     pub state: HubState,
     pub prefs: Prefs,
     pub page: Page,
-    dashboard: Dashboard,
+    pub(crate) dashboard: Dashboard,
     pub fans: FansPage,
     pub lighting: LightingPage,
+    /// RGB device shown in detail on the Devices page (`None`: the list).
+    pub device_detail: Option<String>,
+    /// Owned by `settings.rs`.
+    pub settings: crate::settings::SettingsPage,
+    /// Owned by `updater.rs`.
+    pub update: UpdateState,
+    /// Owned by `automations.rs`.
+    pub automations: crate::automations::AutomationsPage,
+    /// Audio and Network pages, owned by `system/`.
+    pub system: crate::system::SystemPages,
     /// `None` when the application is minimized to the system tray.
     pub controls: Option<Controls>,
     pub window: Option<AnyWindowHandle>,
@@ -105,8 +121,14 @@ impl HubApp {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let ticked = this.update(cx, |app, cx| {
-                    if app.alerts.daemon_lost(app.state.last_update(), Instant::now()) {
-                        notify("ControlAnything: service stopped", "Fans handed back to the BIOS.");
+                    if app
+                        .alerts
+                        .daemon_lost(app.state.last_update(), Instant::now())
+                    {
+                        notify(
+                            "ControlAnything: service stopped",
+                            "Fans handed back to the BIOS.",
+                        );
                     }
                     cx.notify();
                 });
@@ -127,6 +149,11 @@ impl HubApp {
             dashboard: Dashboard::default(),
             fans: FansPage::default(),
             lighting: LightingPage::default(),
+            device_detail: None,
+            settings: Default::default(),
+            update: UpdateState::start(),
+            automations: Default::default(),
+            system: Default::default(),
             controls: None,
             window: None,
             tray,
@@ -154,8 +181,7 @@ impl HubApp {
         subscriptions.extend(fan_subscriptions);
         let (lighting, lighting_subscriptions) = LightingControls::new(window, cx);
         subscriptions.extend(lighting_subscriptions);
-        let profile_name =
-            cx.new(|cx| InputState::new(window, cx).placeholder("New profile name"));
+        let profile_name = cx.new(|cx| InputState::new(window, cx).placeholder("New profile name"));
         self.fans.source_items.clear();
         self.controls = Some(Controls {
             profile_select,
@@ -181,13 +207,28 @@ impl HubApp {
 
     fn receive(&mut self, msg: DaemonMsg, cx: &mut Context<Self>) {
         let profiles_changed = matches!(msg, DaemonMsg::State { .. });
+        if let DaemonMsg::State { auto_profile, .. } = &msg {
+            self.automations.active.clone_from(auto_profile);
+        }
         if let DaemonMsg::Snapshot(snapshot) = &msg {
             self.dashboard.apply(snapshot);
+            let fired =
+                self.alerts
+                    .check_thresholds(&snapshot.readings, &self.prefs, Instant::now());
+            for (summary, body) in fired {
+                notify(summary, body);
+            }
+            if let Some(tray) = self.tray.as_mut() {
+                tray.set_cpu_temp(
+                    find_kind(&snapshot.readings, Device::Cpu, SensorKind::Temperature)
+                        .map(|r| self.prefs.temperature_unit.format(r.value, 0)),
+                );
+            }
         }
         self.state.receive(msg);
         if self.alerts.failsafe_rising(self.state.failsafe) {
             notify(
-                "Overheating detected: fans at 100%",
+                "Overheating: fans at 100%",
                 "Critical CPU/GPU threshold exceeded: all controlled fans are forced to 100%.",
             );
         }
@@ -227,7 +268,11 @@ impl HubApp {
 
     /// Asks the daemon to activate a profile (no effect if already active).
     pub fn activate_profile(&self, name: String) {
-        let active = self.state.config.as_ref().map(|c| c.active_profile.as_str());
+        let active = self
+            .state
+            .config
+            .as_ref()
+            .map(|c| c.active_profile.as_str());
         if active != Some(name.as_str()) {
             self.send(ClientMsg::SetProfile { name });
         }
@@ -255,13 +300,19 @@ impl HubApp {
         };
         match config.validate() {
             Ok(()) => {
-                self.state.pending_apply = true;
+                self.state.start_pending();
                 self.state.notice = None;
                 self.send(ClientMsg::SetConfig { config });
             }
             Err(err) => self.state.notice = Some(Notice::Error(err.to_string())),
         }
         cx.notify();
+    }
+
+    /// A config was sent to the service and its answer is awaited (at most 5 s):
+    /// buttons that wait on it show `loading` and stay disabled.
+    pub fn is_pending(&self) -> bool {
+        self.state.pending(Instant::now())
     }
 
     pub fn reset_draft(&mut self, cx: &mut Context<Self>) {
@@ -306,30 +357,47 @@ impl HubApp {
                 .active(self.page == page)
                 .on_click(cx.listener(move |app, _, _, cx| {
                     app.page = page;
+                    app.device_detail = None;
                     cx.notify();
                 }))
         };
         let status = if self.state.connected() {
-            solid_tag(GREEN).rounded_full().child("Connected")
+            solid_tag(GREEN).rounded_full().child("Service connected")
         } else {
-            solid_tag(RED).rounded_full().child("Daemon disconnected")
+            solid_tag(RED).rounded_full().child("Service offline")
+        };
+        let group = |label: &'static str, items: Vec<SidebarMenuItem>| {
+            SidebarGroup::new(label).child(SidebarMenu::new().gap_1().children(items))
         };
         Sidebar::new("nav")
             .w(px(220.))
             .footer(h_flex().w_full().justify_center().child(status))
-            .child(
-                SidebarMenu::new()
-                    .gap_1()
-                    .pt_3()
-                    .child(item("Dashboard", IconName::LayoutDashboard, Page::Dashboard, cx))
-                    .child(item("Fans", IconName::Fan, Page::Fans, cx))
-                    .child(item("Lighting", IconName::Lightbulb, Page::Lighting, cx))
-                    .child(item("Devices", IconName::Microchip, Page::Devices, cx))
-                    .child(item("Settings", IconName::Settings, Page::Settings, cx)),
-            )
+            .child(group(
+                "Control",
+                vec![
+                    item("Dashboard", IconName::LayoutDashboard, Page::Dashboard, cx),
+                    item("Fans", IconName::Fan, Page::Fans, cx),
+                    item("Lighting", IconName::Lightbulb, Page::Lighting, cx),
+                    item("Devices", IconName::Microchip, Page::Devices, cx),
+                ],
+            ))
+            .child(group(
+                "System",
+                vec![
+                    item("Audio", IconName::Volume2, Page::Audio, cx),
+                    item("Network", IconName::Wifi, Page::Network, cx),
+                ],
+            ))
+            .child(group(
+                "App",
+                vec![
+                    item("Automations", IconName::Zap, Page::Automations, cx),
+                    item("Settings", IconName::Settings, Page::Settings, cx),
+                ],
+            ))
     }
 
-    fn title_bar(&self) -> impl IntoElement {
+    fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let profile_select = self
             .controls
             .as_ref()
@@ -347,7 +415,8 @@ impl HubApp {
                         .text_sm()
                         .font_semibold()
                         .child(img(BRAND_ICON).size(px(18.)).rounded_sm())
-                        .child("ControlAnything"),
+                        .child("ControlAnything")
+                        .child(div().occlude().child(self.update_button(cx))),
                 )
                 .child(
                     h_flex()
@@ -357,7 +426,7 @@ impl HubApp {
                             row.child(
                                 solid_tag(RED)
                                     .rounded_full()
-                                    .child("OVERHEATING: fans at 100%"),
+                                    .child("Overheating: fans at 100%"),
                             )
                         })
                         .when_some(profile_select, |row, select| {
@@ -377,32 +446,33 @@ impl HubApp {
         )
     }
 
-    /// Closable info or error banner.
+    /// "Check for updates" icon button, highlighted when a newer version is known.
+    fn update_button(&self, cx: &mut Context<Self>) -> Button {
+        let button = Button::new("check-update")
+            .small()
+            .icon(IconName::CircleArrowUp)
+            .tooltip("Check for updates")
+            .loading(updater::busy(&self.update))
+            .on_click(cx.listener(|app, _, window, cx| updater::on_update_click(app, window, cx)));
+        if updater::has_update(&self.update) {
+            button.primary()
+        } else {
+            button.ghost()
+        }
+    }
+
+    /// Closable success or error banner.
     fn notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let theme = cx.theme();
-        let (text, color) = match self.state.notice.as_ref()? {
-            Notice::Info(text) => (text.clone(), theme.success),
-            Notice::Error(text) => (text.clone(), theme.danger),
+        let alert = match self.state.notice.as_ref()? {
+            Notice::Info(text) => Alert::success("notice", text.clone()),
+            Notice::Error(text) => Alert::error("notice", text.clone()),
         };
         Some(
-            h_flex()
-                .justify_between()
-                .gap_3()
-                .p_3()
-                .rounded(px(RADIUS))
-                .bg(color.opacity(0.15))
-                .text_color(color)
-                .child(div().flex_1().text_sm().child(text))
-                .child(
-                    Button::new("close-notice")
-                        .ghost()
-                        .small()
-                        .icon(IconName::X)
-                        .on_click(cx.listener(|app, _, _, cx| {
-                            app.state.notice = None;
-                            cx.notify();
-                        })),
-                )
+            alert
+                .on_close(cx.listener(|app, _, _, cx| {
+                    app.state.notice = None;
+                    cx.notify();
+                }))
                 .into_any_element(),
         )
     }
@@ -412,6 +482,7 @@ impl HubApp {
         if !self.state.dirty() || self.page == Page::Dashboard {
             return None;
         }
+        let pending = self.is_pending();
         let theme = cx.theme();
         Some(
             h_flex()
@@ -431,6 +502,7 @@ impl HubApp {
                                 .small()
                                 .icon(IconName::Undo2)
                                 .label("Cancel")
+                                .disabled(pending)
                                 .on_click(cx.listener(|app, _, _, cx| app.reset_draft(cx))),
                         )
                         .child(
@@ -439,6 +511,8 @@ impl HubApp {
                                 .small()
                                 .icon(IconName::Check)
                                 .label("Apply")
+                                .loading(pending)
+                                .disabled(pending)
                                 .on_click(cx.listener(|app, _, _, cx| app.apply_draft(cx))),
                         ),
                 )
@@ -451,18 +525,29 @@ impl Render for HubApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_profile_select(window, cx);
         let page = match self.page {
-            Page::Dashboard => self.dashboard.render(&self.state, self.prefs.temperature_unit, cx),
+            Page::Dashboard => self.render_dashboard(cx),
             Page::Fans => self.render_fans(window, cx),
             Page::Lighting => self.render_lighting(window, cx),
-            Page::Devices => self.render_devices(cx),
+            Page::Devices => match self.device_detail.clone() {
+                Some(id) => self.render_device_detail(&id, window, cx),
+                None => self.render_devices(cx),
+            },
+            Page::Audio => self.render_audio(cx),
+            Page::Network => self.render_network(cx),
+            Page::Automations => self.render_automations(window, cx),
             Page::Settings => self.render_settings(cx),
         };
+        let footer: Vec<AnyElement> = self
+            .notice(cx)
+            .into_iter()
+            .chain(self.apply_bar(cx))
+            .collect();
         let theme = cx.theme();
         v_flex()
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
-            .child(self.title_bar())
+            .child(self.title_bar(cx))
             .child(
                 h_flex()
                     .flex_1()
@@ -474,12 +559,21 @@ impl Render for HubApp {
                             .flex_1()
                             .min_w_0()
                             .h_full()
-                            .p_4()
-                            .gap_4()
-                            .children(self.notice(cx))
-                            .children(self.apply_bar(cx))
-                            .child(page)
-                            .overflow_y_scrollbar(),
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .p_4()
+                                    .gap_4()
+                                    .child(page)
+                                    .overflow_y_scrollbar(),
+                            )
+                            // Outside the scroll column: always visible.
+                            .when(!footer.is_empty(), |column| {
+                                column.child(
+                                    v_flex().flex_none().gap_2().px_4().pb_4().children(footer),
+                                )
+                            }),
                     ),
             )
     }

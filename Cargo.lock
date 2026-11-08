@@ -3185,7 +3185,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "hub-app"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-channel",
  "hub-core",
@@ -3198,14 +3198,14 @@ dependencies = [
 
 [[package]]
 name = "hub-backend-linux"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hub-core",
 ]
 
 [[package]]
 name = "hub-backend-windows"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hub-core",
  "windows 0.62.2",
@@ -3213,7 +3213,7 @@ dependencies = [
 
 [[package]]
 name = "hub-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3223,9 +3223,10 @@ dependencies = [
 
 [[package]]
 name = "hub-daemon"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "hub-backend-linux",
  "hub-backend-windows",
  "hub-core",
@@ -3243,7 +3244,7 @@ dependencies = [
 
 [[package]]
 name = "hub-rgb"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hidapi",
  "hub-core",
@@ -3252,7 +3253,7 @@ dependencies = [
 
 [[package]]
 name = "hub-ui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-channel",
  "auto-launch",
@@ -3264,9 +3265,12 @@ dependencies = [
  "image",
  "notify-rust",
  "serde",
+ "serde_json",
  "toml 1.2.1+spec-1.1.0",
  "tracing",
  "tray-icon",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

@@ -16,6 +16,8 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 sysinfo.workspace = true
+# Local time for schedules (already in the dependency tree)
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 nvml-wrapper.workspace = true
 
 [target.'cfg(windows)'.dependencies]

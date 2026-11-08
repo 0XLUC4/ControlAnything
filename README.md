@@ -13,8 +13,13 @@ Windows installers are published on the releases page: https://github.com/0XLUC4
 - **Fans**: curves per fan, hysteresis, failsafe, per-channel names.
 - **Profiles**: Silent, Balanced, Performance and Custom, shipped in `configs/controlanything-profiles.toml`.
   Hotkeys **Ctrl+Shift+F1..F4** activate profiles 1 to 4 (order of the profile list; on Linux, X11 only).
-- **Presets** (Silent, Balanced, Performance) in the curve editor apply the full recipe (curve, minimum duty,
-  hysteresis, step up/down, response time), identical to the shipped profiles. The temperature source is kept.
+- **Presets** (Silent, Balanced, Performance) in the Fans page header apply the full recipe (curve, minimum duty,
+  hysteresis, step up/down, response time) to all fans at once, identical to the shipped profiles. Pumps keep
+  their safe settings. A per-fan speed range can be skipped to avoid resonance noise.
+- **Automations**: switch profile while an app or game runs, time schedules (e.g. Silent from 23:00 to 07:00),
+  and sleep/resume handling (fans back to firmware and lighting off during sleep, everything reapplied on resume).
+- **Dashboard**: live readings, history of 2 min, 10 min or 1 h, CSV export, and desktop alerts when a
+  temperature goes over a limit or a fan stalls.
 - **Lighting** page (RGB, MSI Mystic Light over USB HID): global brightness, sync (same effect everywhere) or
   per-zone effects: static, breathing, rainbow, wave, temperature (color follows a temperature source), load
   (color follows a sensor), plus "off" and "leave to firmware".
@@ -24,6 +29,11 @@ Windows installers are published on the releases page: https://github.com/0XLUC4
   "Logitech Mouse".
 - **Devices** page: every detected device (lighting devices, fan channels, sensor counts per component).
   A lighting device can be released from ControlAnything so its firmware or vendor software controls it again.
+  Click a lighting device to open its page: color picker, effect, brightness per device, whole device or per zone.
+- **Audio** page (Windows): volume, mute and default device for every output and input.
+- **Network** page (Windows): adapters, IP and MAC addresses, link speed, live upload and download rates.
+- **Updates**: the update button in the title bar checks the latest GitHub release and installs it (the SHA-256
+  published by GitHub is verified first).
 - **Single instance**: launching the UI a second time exits immediately.
 
 ### Supported hardware (validated)

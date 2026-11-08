@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::config::{CurvePoint, FailsafeConfig, FanMode, FanSettings, TempSource};
+use crate::config::{CurvePoint, DutyRange, FailsafeConfig, FanMode, FanSettings, TempSource};
 use crate::{Device, Reading, SensorKind};
 
 /// Linear interpolation of the curve, clamped by the first and last points.
@@ -113,6 +113,15 @@ impl FanControl {
                 .max(settings.min_duty)
                 .min(100),
         };
+        // Target in the avoided band: stay on the edge we come from (no flip-flop between edges).
+        let target = settings.avoid.map_or(target, |band| {
+            let high = match self.last_duty {
+                Some(last) if last >= band.max => true,
+                Some(last) if last <= band.min => false,
+                _ => u16::from(target) * 2 >= u16::from(band.min) + u16::from(band.max),
+            };
+            skip_band(target, band, high || band.min < settings.min_duty)
+        });
         let Some(last) = self.last_duty else {
             self.set_duty(target, now);
             return Some(target);
@@ -129,6 +138,10 @@ impl FanControl {
         } else {
             step_toward(last, target, settings.step_down)
         };
+        // A step landing in the band crosses it at once, toward the target (already outside).
+        let duty = settings
+            .avoid
+            .map_or(duty, |band| skip_band(duty, band, duty > last));
         self.set_duty(duty, now);
         Some(duty)
     }
@@ -150,6 +163,15 @@ fn step_toward(from: u8, to: u8, step: u8) -> u8 {
         to.min(from.saturating_add(step))
     } else {
         to.max(from.saturating_sub(step))
+    }
+}
+
+/// Duty strictly inside `band` goes to its upper (`high`) or lower edge; else unchanged.
+fn skip_band(duty: u8, band: DutyRange, high: bool) -> u8 {
+    match (band.min < duty && duty < band.max, high) {
+        (false, _) => duty,
+        (true, true) => band.max,
+        (true, false) => band.min,
     }
 }
 
@@ -218,6 +240,7 @@ mod tests {
             step_up: 0,
             step_down: 0,
             response_ms: 0,
+            avoid: None,
         }
     }
 
@@ -413,6 +436,42 @@ mod tests {
         assert_eq!(fc.update(&s, Some(35.0), now), Some(20));
         s.zero_rpm_below = None;
         assert_eq!(fc.update(&s, Some(31.0), now), Some(25));
+    }
+
+    #[test]
+    fn avoid_band_jumps_to_edges_without_oscillation() {
+        let now = Instant::now();
+        let mut fc = FanControl::new();
+        let mut s = curve(0); // 30 °C 20 %, 70 °C 100 %: 2 % per °C
+        s.avoid = Some(DutyRange { min: 40, max: 60 });
+        // First target 50 (tie): upper edge; 44 (nearest): lower edge.
+        assert_eq!(fc.update(&s, Some(45.0), now), Some(60));
+        let mut low = FanControl::new();
+        assert_eq!(low.update(&s, Some(42.0), now), Some(40));
+        // Coming from above, a target inside the band holds the upper edge.
+        assert_eq!(fc.update(&s, Some(42.0), now), Some(60));
+        assert_eq!(fc.update(&s, Some(42.0), now), Some(60));
+        // Coming from below, it holds the lower edge.
+        assert_eq!(low.update(&s, Some(48.0), now), Some(40));
+        // Edges and outside values are kept.
+        assert_eq!(low.update(&s, Some(40.0), now), Some(40));
+        assert_eq!(low.update(&s, Some(30.0), now), Some(20));
+        assert_eq!(low.update(&s, Some(50.0), now), Some(60));
+        // Steps crossing the band jump over it, toward the target.
+        let mut fc = FanControl::new();
+        s.step_up = 10;
+        s.step_down = 10;
+        assert_eq!(fc.update(&s, Some(40.0), now), Some(40));
+        assert_eq!(fc.update(&s, Some(70.0), now), Some(60));
+        assert_eq!(fc.update(&s, Some(70.0), now), Some(70));
+        assert_eq!(fc.update(&s, Some(30.0), now), Some(60));
+        assert_eq!(fc.update(&s, Some(30.0), now), Some(40));
+        assert_eq!(fc.update(&s, Some(30.0), now), Some(30));
+        // Lower edge under the floor: the upper edge is used.
+        let mut fc = FanControl::new();
+        let mut s = curve(45);
+        s.avoid = Some(DutyRange { min: 40, max: 60 });
+        assert_eq!(fc.update(&s, Some(30.0), now), Some(60));
     }
 
     fn failsafe_readings(cpu: f32, gpu: f32) -> Vec<Reading> {

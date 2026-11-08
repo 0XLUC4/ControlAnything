@@ -65,7 +65,9 @@ fn forward_events(commands: Sender<Command>) {
 
 /// Icon and menu; must be used on the thread that pumps its messages.
 struct TrayMenu {
-    _icon: TrayIcon,
+    // Linux: kept alive only, tooltips are unsupported.
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    icon: TrayIcon,
     profiles: Submenu,
     names: Vec<String>,
 }
@@ -97,7 +99,7 @@ impl TrayMenu {
             .build()
             .map_err(|err| err.to_string())?;
         Ok(Self {
-            _icon: tray,
+            icon: tray,
             profiles,
             names: Vec::new(),
         })
@@ -131,9 +133,19 @@ impl TrayMenu {
     }
 }
 
+/// Tray tooltip: "ControlAnything", plus the CPU temperature when known.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+fn tooltip(cpu_temp: Option<&str>) -> String {
+    cpu_temp.map_or("ControlAnything".into(), |temp| {
+        format!("ControlAnything: CPU {temp}")
+    })
+}
+
 pub struct Tray {
     #[cfg(not(target_os = "linux"))]
     menu: TrayMenu,
+    #[cfg(not(target_os = "linux"))]
+    tooltip: String,
     #[cfg(target_os = "linux")]
     updates: std::sync::mpsc::Sender<(Vec<String>, String)>,
 }
@@ -144,7 +156,10 @@ impl Tray {
     pub fn new(commands: Sender<Command>) -> Result<Self, String> {
         let menu = TrayMenu::build()?;
         forward_events(commands);
-        Ok(Self { menu })
+        Ok(Self {
+            menu,
+            tooltip: tooltip(None),
+        })
     }
 
     #[cfg(target_os = "linux")]
@@ -179,6 +194,23 @@ impl Tray {
         Ok(Self { updates })
     }
 
+    /// Shows the CPU temperature in the tooltip (only touches the icon when the text changes).
+    /// Linux: AppIndicator has no tooltip, nothing to do.
+    pub fn set_cpu_temp(&mut self, cpu_temp: Option<String>) {
+        #[cfg(not(target_os = "linux"))]
+        {
+            let text = tooltip(cpu_temp.as_deref());
+            if text != self.tooltip {
+                if let Err(err) = self.menu.icon.set_tooltip(Some(&text)) {
+                    tracing::warn!("system tray tooltip: {err}");
+                }
+                self.tooltip = text;
+            }
+        }
+        #[cfg(target_os = "linux")]
+        let _ = cpu_temp;
+    }
+
     pub fn set_profiles(&mut self, names: Vec<String>, active: String) {
         #[cfg(not(target_os = "linux"))]
         self.menu.set_profiles(&names, &active);
@@ -200,6 +232,12 @@ mod tests {
             Some(Command::SetProfile("Games & Co".into()))
         );
         assert_eq!(menu_command("other"), None);
+    }
+
+    #[test]
+    fn tooltip_shows_cpu_temp() {
+        assert_eq!(tooltip(None), "ControlAnything");
+        assert_eq!(tooltip(Some("52 °C")), "ControlAnything: CPU 52 °C");
     }
 
     #[test]

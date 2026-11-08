@@ -99,6 +99,9 @@ pub mod ipc {
         State {
             config: Config,
             channels: Vec<FanChannel>,
+            /// Profile forced by an automation rule (`None`: manual profile).
+            #[serde(default)]
+            auto_profile: Option<String>,
         },
         /// Detected RGB devices: on connection and when the list changes.
         Rgb { devices: Vec<RgbDeviceInfo> },

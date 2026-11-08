@@ -3,13 +3,14 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, BorderStyle, Bounds, Context, Hsla, InteractiveElement as _, IntoElement,
     MouseButton, ParentElement as _, PathBuilder, Pixels, Point, Styled as _, Window, canvas, div,
     fill, point, px, quad, rgb, size,
 };
-use hub_core::config::CurvePoint;
+use hub_core::config::{CurvePoint, DutyRange};
 
 use crate::prefs::TempUnit;
 
@@ -23,8 +24,7 @@ const HIT_RADIUS: f32 = 9.0;
 const HANDLE_RADIUS: f32 = 5.0;
 pub const WIDTH: f32 = 520.0;
 pub const HEIGHT: f32 = 260.0;
-const CURVE_COLOR: u32 = 0x38bdf8;
-const MARKER_COLOR: u32 = 0xf97316;
+use crate::widgets::{MARKER as MARKER_COLOR, RED as AVOID_COLOR, SERIES_CPU as CURVE_COLOR};
 
 /// (temp, duty) → position in the plot area (origin at top left).
 pub fn to_px(temp: f32, duty: f32, width: f32, height: f32) -> (f32, f32) {
@@ -53,9 +53,7 @@ pub fn move_point(points: &mut [CurvePoint], index: usize, temp: f32, duty: u8) 
     let low = index
         .checked_sub(1)
         .map_or(TEMP_MIN, |i| points[i].temp + MIN_GAP);
-    let high = points
-        .get(index + 1)
-        .map_or(TEMP_MAX, |p| p.temp - MIN_GAP);
+    let high = points.get(index + 1).map_or(TEMP_MAX, |p| p.temp - MIN_GAP);
     if let Some(p) = points.get_mut(index) {
         p.temp = temp.max(low).min(high);
         p.duty = duty.min(100);
@@ -68,7 +66,13 @@ pub fn add_point(points: &mut Vec<CurvePoint>, temp: f32, duty: u8) -> bool {
         return false;
     }
     let at = points.partition_point(|p| p.temp < temp);
-    points.insert(at, CurvePoint { temp, duty: duty.min(100) });
+    points.insert(
+        at,
+        CurvePoint {
+            temp,
+            duty: duty.min(100),
+        },
+    );
     true
 }
 
@@ -99,11 +103,12 @@ impl CurveEditor {
         )
     }
 
-    /// Chart with axes, grid, curve, handles and a "current temperature / target" marker.
-    /// Mouse handlers are provided by the owning view.
+    /// Chart with axes, grid, avoided speed band, curve, handles and a "current temperature / target"
+    /// marker. Mouse handlers are provided by the owning view.
     pub fn render<V: 'static>(
         &self,
         points: &[CurvePoint],
+        avoid: Option<DutyRange>,
         marker: Option<(f32, f32)>,
         handlers: CurveHandlers<V>,
         unit: TempUnit,
@@ -117,7 +122,7 @@ impl CurveEditor {
         let dragging = self.dragging;
         let plot = canvas(
             move |b, _, _| bounds.set(b),
-            move |b, (), window, _| paint(b, &points, marker, dragging, grid, window),
+            move |b, (), window, _| paint(b, &points, avoid, marker, dragging, grid, window),
         )
         .size_full();
 
@@ -133,21 +138,28 @@ impl CurveEditor {
             .on_mouse_up(MouseButton::Left, cx.listener(handlers.up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(handlers.up_out));
 
-        let y_labels = div().relative().w(px(40.)).h(px(HEIGHT)).children(
-            [100, 75, 50, 25, 0].map(|duty| {
-                let (_, y) = to_px(TEMP_MIN, duty as f32, WIDTH, HEIGHT);
-                div()
-                    .absolute()
-                    .top(px((y - 8.).min(HEIGHT - 16.)))
-                    .right(px(8.))
-                    .whitespace_nowrap()
-                    .text_xs()
-                    .text_color(label)
-                    .child(format!("{duty} %"))
-            }),
-        );
-        let x_labels = div().relative().ml(px(40.)).w(px(WIDTH)).h(px(22.)).children(
-            [20, 40, 60, 80, 100].map(|temp| {
+        let y_labels =
+            div()
+                .relative()
+                .w(px(40.))
+                .h(px(HEIGHT))
+                .children([100, 75, 50, 25, 0].map(|duty| {
+                    let (_, y) = to_px(TEMP_MIN, duty as f32, WIDTH, HEIGHT);
+                    div()
+                        .absolute()
+                        .top(px((y - 8.).min(HEIGHT - 16.)))
+                        .right(px(8.))
+                        .whitespace_nowrap()
+                        .text_xs()
+                        .text_color(label)
+                        .child(format!("{duty} %"))
+                }));
+        let x_labels = div()
+            .relative()
+            .ml(px(40.))
+            .w(px(WIDTH))
+            .h(px(22.))
+            .children([20, 40, 60, 80, 100].map(|temp| {
                 let (x, _) = to_px(temp as f32, 0.0, WIDTH, HEIGHT);
                 div()
                     .absolute()
@@ -157,8 +169,7 @@ impl CurveEditor {
                     .text_xs()
                     .text_color(label)
                     .child(unit.format(temp as f32, 0))
-            }),
-        );
+            }));
         v_flex()
             .child(h_flex().child(y_labels).child(area))
             .child(x_labels)
@@ -182,6 +193,7 @@ fn color(hex: u32) -> Hsla {
 fn paint(
     bounds: Bounds<Pixels>,
     points: &[CurvePoint],
+    avoid: Option<DutyRange>,
     marker: Option<(f32, f32)>,
     dragging: Option<usize>,
     grid: Hsla,
@@ -203,6 +215,15 @@ fn paint(
         window.paint_quad(fill(
             Bounds::new(at(0.0, y.min(h - 1.0)), size(px(w), px(1.))),
             grid,
+        ));
+    }
+
+    if let Some(band) = avoid {
+        let (_, top) = to_px(TEMP_MIN, f32::from(band.max), w, h);
+        let (_, bottom) = to_px(TEMP_MIN, f32::from(band.min), w, h);
+        window.paint_quad(fill(
+            Bounds::new(at(0.0, top), size(px(w), px(bottom - top))),
+            color(AVOID_COLOR).opacity(0.12),
         ));
     }
 
@@ -229,12 +250,28 @@ fn paint(
             Bounds::new(at(x, 0.0), size(px(1.), px(h))),
             color(MARKER_COLOR).opacity(0.6),
         ));
-        dot(window, at(x, y), 4.0, color(MARKER_COLOR), color(MARKER_COLOR));
+        dot(
+            window,
+            at(x, y),
+            4.0,
+            color(MARKER_COLOR),
+            color(MARKER_COLOR),
+        );
     }
 
     for (i, &(x, y)) in curve.iter().enumerate() {
-        let radius = if dragging == Some(i) { HANDLE_RADIUS + 2.0 } else { HANDLE_RADIUS };
-        dot(window, at(x, y), radius, gpui_kit::white(), color(CURVE_COLOR));
+        let radius = if dragging == Some(i) {
+            HANDLE_RADIUS + 2.0
+        } else {
+            HANDLE_RADIUS
+        };
+        dot(
+            window,
+            at(x, y),
+            radius,
+            gpui_kit::white(),
+            color(CURVE_COLOR),
+        );
     }
 }
 
@@ -253,10 +290,12 @@ fn dot(window: &mut Window, center: Point<Pixels>, radius: f32, background: Hsla
 
 /// Short help text shown under the chart.
 pub fn help_text(app: &App) -> impl IntoElement {
-    div()
+    h_flex()
+        .gap_1()
         .text_xs()
         .text_color(app.theme().muted_foreground)
-        .child("Drag: move a point, Double-click: add, Right-click: remove")
+        .child(Icon::new(IconName::Info).xsmall())
+        .child("Drag to move a point, double-click to add, right-click to remove")
 }
 
 #[cfg(test)]
@@ -264,7 +303,9 @@ mod tests {
     use super::*;
 
     fn pts(list: &[(f32, u8)]) -> Vec<CurvePoint> {
-        list.iter().map(|&(temp, duty)| CurvePoint { temp, duty }).collect()
+        list.iter()
+            .map(|&(temp, duty)| CurvePoint { temp, duty })
+            .collect()
     }
 
     #[test]
@@ -289,7 +330,13 @@ mod tests {
     fn dragging_cannot_cross_neighbours() {
         let mut points = pts(&[(30.0, 20), (50.0, 40), (70.0, 80)]);
         move_point(&mut points, 1, 90.0, 150);
-        assert_eq!(points[1], CurvePoint { temp: 69.0, duty: 100 });
+        assert_eq!(
+            points[1],
+            CurvePoint {
+                temp: 69.0,
+                duty: 100
+            }
+        );
         move_point(&mut points, 1, 10.0, 0);
         assert_eq!(points[1].temp, 31.0);
         move_point(&mut points, 0, 5.0, 10);
@@ -302,7 +349,10 @@ mod tests {
     fn add_keeps_sorted_and_rejects_duplicates() {
         let mut points = pts(&[(30.0, 20), (70.0, 80)]);
         assert!(add_point(&mut points, 50.0, 40));
-        assert_eq!(points.iter().map(|p| p.temp).collect::<Vec<_>>(), [30.0, 50.0, 70.0]);
+        assert_eq!(
+            points.iter().map(|p| p.temp).collect::<Vec<_>>(),
+            [30.0, 50.0, 70.0]
+        );
         assert!(!add_point(&mut points, 50.5, 40));
         assert!(add_point(&mut points, 90.0, 255));
         assert_eq!(points[3].duty, 100);

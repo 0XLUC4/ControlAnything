@@ -3,19 +3,25 @@
 
 mod alerts;
 mod app;
+mod audio;
+mod automations;
 mod cards;
 mod chart;
 mod curve_editor;
 mod dashboard;
+mod device_detail;
 mod devices;
 mod fans;
 mod hotkeys;
 mod icons;
 mod lighting;
+mod network;
 mod prefs;
 mod settings;
 mod state;
+mod system;
 mod tray;
+mod updater;
 mod widgets;
 
 use async_channel::{Receiver, Sender};

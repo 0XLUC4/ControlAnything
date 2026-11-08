@@ -51,6 +51,15 @@ pub struct FanSettings {
     pub step_down: u8,
     /// Minimum delay between two target changes.
     pub response_ms: u64,
+    /// Duty range never held by a curve (resonance, noisy speed): output jumps to an edge.
+    pub avoid: Option<DutyRange>,
+}
+
+/// Inclusive duty range in %; only values strictly between `min` and `max` are avoided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DutyRange {
+    pub min: u8,
+    pub max: u8,
 }
 
 impl Default for FanSettings {
@@ -63,6 +72,7 @@ impl Default for FanSettings {
             step_up: 10,
             step_down: 5,
             response_ms: 1000,
+            avoid: None,
         }
     }
 }
@@ -104,6 +114,73 @@ pub struct Config {
     pub failsafe: FailsafeConfig,
     /// Lighting, shared by all profiles.
     pub rgb: crate::rgb::RgbConfig,
+    /// Automatic profile switching (app running, time of day).
+    pub automations: Automations,
+}
+
+/// Profile switching rules. Priority: process rule > schedule > manual `active_profile`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Automations {
+    pub process_rules: Vec<ProcessRule>,
+    pub schedules: Vec<ScheduleRule>,
+}
+
+/// While a process named `exe` runs ("game.exe", case-insensitive), `profile` is used.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProcessRule {
+    pub exe: String,
+    pub profile: String,
+}
+
+/// From `start` to `end` (minutes since midnight, local time), `profile` is used.
+/// `start > end` wraps past midnight (23:00-07:00); `start == end` never matches.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScheduleRule {
+    pub start: u16,
+    pub end: u16,
+    pub profile: String,
+}
+
+/// Minutes in a day: schedule bounds are below it.
+pub const DAY_MINUTES: u16 = 24 * 60;
+
+/// Process name key: lowercase, without the ".exe" suffix (same key on Windows and Linux).
+pub fn process_key(name: &str) -> String {
+    let name = name.trim().to_lowercase();
+    name.strip_suffix(".exe").map(str::to_owned).unwrap_or(name)
+}
+
+impl ScheduleRule {
+    pub fn contains(&self, minute: u16) -> bool {
+        if self.start <= self.end {
+            (self.start..self.end).contains(&minute)
+        } else {
+            minute >= self.start || minute < self.end
+        }
+    }
+}
+
+impl Config {
+    /// Profile chosen by the automations, `None` = manual `active_profile`.
+    /// `running(key)` tells if a process with this [`process_key`] runs; `minute` = local time of day.
+    /// Rules pointing to a missing profile are skipped (deleted or renamed profile).
+    pub fn automation_profile(&self, running: impl Fn(&str) -> bool, minute: u16) -> Option<&str> {
+        let exists = |name: &str| self.profiles.iter().any(|p| p.name == name);
+        let rules = &self.automations;
+        rules
+            .process_rules
+            .iter()
+            .find(|r| exists(&r.profile) && running(&process_key(&r.exe)))
+            .map(|r| r.profile.as_str())
+            .or_else(|| {
+                rules
+                    .schedules
+                    .iter()
+                    .find(|r| exists(&r.profile) && r.contains(minute))
+                    .map(|r| r.profile.as_str())
+            })
+    }
 }
 
 impl Default for Config {
@@ -121,6 +198,7 @@ impl Default for Config {
             fan_labels: BTreeMap::new(),
             failsafe: FailsafeConfig::default(),
             rgb: crate::rgb::RgbConfig::default(),
+            automations: Automations::default(),
         }
     }
 }
@@ -193,6 +271,14 @@ impl Config {
             FailsafeConfig::default().gpu_critical,
         );
         self.rgb.validate()?;
+        let rules = &mut self.automations;
+        rules
+            .process_rules
+            .retain(|r| !process_key(&r.exe).is_empty());
+        for rule in &mut rules.schedules {
+            rule.start %= DAY_MINUTES;
+            rule.end %= DAY_MINUTES;
+        }
         Ok(())
     }
 
@@ -214,6 +300,10 @@ impl FanSettings {
         self.min_duty = self.min_duty.min(100);
         self.hysteresis = clamp_or(self.hysteresis, 0.0, 10.0, 2.0);
         self.zero_rpm_below = self.zero_rpm_below.filter(|t| t.is_finite());
+        self.avoid = self.avoid.and_then(|r| {
+            let (min, max) = (r.min.min(r.max), r.max.max(r.min).min(100));
+            (min < max).then_some(DutyRange { min, max })
+        });
         match &mut self.mode {
             FanMode::Auto => {}
             FanMode::Fixed { duty } => *duty = (*duty).min(100),
@@ -445,6 +535,7 @@ mod tests {
                 points: Preset::Balanced.points(),
             },
             zero_rpm_below: Some(35.5),
+            avoid: Some(DutyRange { min: 40, max: 55 }),
             ..FanSettings::default()
         });
         let fans = &mut config.profiles[1].fans;
@@ -505,5 +596,74 @@ points = [{ temp = 60.0, duty = 80 }, { temp = 30.0, duty = 20 }]
             Config::from_toml("poll_interval_ms = \"x\""),
             Err(ConfigError::Parse(_))
         ));
+    }
+
+    #[test]
+    fn automation_priority_process_then_schedule_then_manual() {
+        let mut config = Config::default();
+        let night = ScheduleRule {
+            start: 23 * 60,
+            end: 7 * 60,
+            profile: "Silent".into(),
+        };
+        config.automations = Automations {
+            process_rules: vec![
+                ProcessRule {
+                    exe: "Game.EXE".into(),
+                    profile: "Performance".into(),
+                },
+                ProcessRule {
+                    exe: "ghost".into(),
+                    profile: "Deleted".into(),
+                },
+            ],
+            schedules: vec![night.clone()],
+        };
+        let none = |_: &str| false;
+        let game = |key: &str| key == "game";
+        assert_eq!(config.automation_profile(none, 12 * 60), None);
+        assert_eq!(config.automation_profile(none, 23 * 60), Some("Silent"));
+        assert_eq!(config.automation_profile(none, 3 * 60), Some("Silent"));
+        assert_eq!(config.automation_profile(none, 7 * 60), None);
+        assert_eq!(config.automation_profile(game, 3 * 60), Some("Performance"));
+        // A rule pointing to a missing profile is ignored.
+        assert_eq!(
+            config.automation_profile(|_| true, 12 * 60),
+            Some("Performance")
+        );
+        config.automations.process_rules.remove(0);
+        assert_eq!(config.automation_profile(|_| true, 12 * 60), None);
+        let empty = ScheduleRule {
+            start: 60,
+            end: 60,
+            ..night
+        };
+        assert!(!empty.contains(60));
+        assert_eq!(process_key(" Steam.exe "), "steam");
+    }
+
+    #[test]
+    fn automations_roundtrip_and_old_configs_load() {
+        let mut config = Config::default();
+        config.automations.schedules.push(ScheduleRule {
+            start: 1500,
+            end: 420,
+            profile: "Silent".into(),
+        });
+        config.automations.process_rules.push(ProcessRule {
+            exe: " ".into(),
+            profile: "Silent".into(),
+        });
+        config.validate().expect("valid");
+        assert_eq!(config.automations.schedules[0].start, 60);
+        assert!(config.automations.process_rules.is_empty());
+        let text = config.to_toml().expect("serialization");
+        assert_eq!(Config::from_toml(&text).expect("parse"), config);
+        assert_eq!(
+            Config::from_toml("active_profile = \"Balanced\"")
+                .expect("parse")
+                .automations,
+            Automations::default()
+        );
     }
 }

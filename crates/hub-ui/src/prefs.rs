@@ -1,5 +1,6 @@
 //! Interface preferences (per user, outside the daemon config): `ui.toml`.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -61,6 +62,10 @@ pub struct Prefs {
     pub close_to_tray: bool,
     pub temperature_unit: TempUnit,
     pub hotkeys: bool,
+    /// Notify when a temperature sensor (id) goes above this value (°C).
+    pub temp_alarms: BTreeMap<String, f32>,
+    /// Notify when a fan RPM sensor (id) drops below this value (stalled fan).
+    pub rpm_alarms: BTreeMap<String, f32>,
 }
 
 impl Default for Prefs {
@@ -71,6 +76,8 @@ impl Default for Prefs {
             close_to_tray: true,
             temperature_unit: TempUnit::Celsius,
             hotkeys: true,
+            temp_alarms: BTreeMap::new(),
+            rpm_alarms: BTreeMap::new(),
         }
     }
 }
@@ -85,9 +92,7 @@ impl Prefs {
     /// On the first launch under the new name, migrates the "PC Hub" `ui.toml`.
     pub fn load() -> Self {
         let Some(path) = Self::path() else {
-            tracing::warn!(
-                "user config folder not found: default preferences"
-            );
+            tracing::warn!("user config folder not found: default preferences");
             return Self::default();
         };
         if let Some(legacy) = prefs_path(LEGACY_APP_NAME) {
@@ -99,10 +104,7 @@ impl Prefs {
         }
         match std::fs::read_to_string(&path) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|err| {
-                tracing::warn!(
-                    "{} invalid ({err}): default preferences",
-                    path.display()
-                );
+                tracing::warn!("{} invalid ({err}): default preferences", path.display());
                 Self::default()
             }),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Self::default(),
@@ -122,8 +124,7 @@ impl Prefs {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
         }
-        std::fs::write(&path, text)
-            .map_err(|err| format!("Cannot write {}: {err}", path.display()))
+        std::fs::write(&path, text).map_err(|err| format!("Cannot write {}: {err}", path.display()))
     }
 }
 
@@ -214,6 +215,8 @@ mod tests {
         let custom = Prefs {
             temperature_unit: TempUnit::Fahrenheit,
             hotkeys: false,
+            temp_alarms: BTreeMap::from([("cpu/package_temp".into(), 85.0)]),
+            rpm_alarms: BTreeMap::from([("nct6687/fan1".into(), 300.0)]),
             ..Prefs::default()
         };
         let text = toml::to_string(&custom).unwrap_or_default();
@@ -233,7 +236,8 @@ mod tests {
 
     #[test]
     fn legacy_prefs_are_copied_once() {
-        let dir = std::env::temp_dir().join(format!("controlanything-prefs-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("controlanything-prefs-{}", std::process::id()));
         let legacy = dir.join("legacy").join("ui.toml");
         let target = dir.join("new").join("config").join("ui.toml");
         let _ = std::fs::remove_dir_all(&dir);
@@ -242,11 +246,17 @@ mod tests {
         std::fs::create_dir_all(legacy.parent().expect("parent")).expect("folder");
         std::fs::write(&legacy, "hotkeys = false").expect("write");
         assert!(migrate_file(&legacy, &target).expect("migration"));
-        assert_eq!(std::fs::read_to_string(&target).expect("read"), "hotkeys = false");
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("read"),
+            "hotkeys = false"
+        );
         // The new file exists: never overwritten.
         std::fs::write(&legacy, "hotkeys = true").expect("write");
         assert!(!migrate_file(&legacy, &target).expect("migration"));
-        assert_eq!(std::fs::read_to_string(&target).expect("read"), "hotkeys = false");
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("read"),
+            "hotkeys = false"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

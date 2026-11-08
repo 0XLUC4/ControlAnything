@@ -2,12 +2,14 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
-use gpui_kit::{AnyElement, App, Hsla, IntoElement, ParentElement as _, Styled as _, div, rgb};
+use gpui_kit::{AnyElement, App, Hsla, IntoElement, ParentElement as _, Styled as _, rgb};
 use hub_core::{Device, Reading, SensorKind};
 
 use crate::dashboard::{find, find_kind, format_value};
 use crate::prefs::TempUnit;
-use crate::widgets::{self, big_value, card_header, duty_bar};
+use crate::widgets::{
+    self, TEMP_HOT, TEMP_OK, TEMP_WARM, big_value, card_header, duty_bar, stat_line,
+};
 
 pub use crate::state::GPU_TEMP;
 const GPU_LOAD: &str = "gpu0/load";
@@ -19,20 +21,17 @@ const RAM_TOTAL: &str = "ram/total";
 const RAM_LOAD: &str = "ram/load";
 
 /// Temperature color thresholds (configurable in phase 2).
-const TEMP_WARM: f32 = 60.0;
-const TEMP_HOT: f32 = 80.0;
-const GREEN: u32 = 0x22c55e;
-const ORANGE: u32 = 0xf97316;
-const RED: u32 = 0xef4444;
+const WARM_FROM: f32 = 60.0;
+const HOT_FROM: f32 = 80.0;
 
 /// Color (hex RGB) of a temperature: green < 60, orange < 80, red above.
 pub fn temp_color(celsius: f32) -> u32 {
-    if celsius < TEMP_WARM {
-        GREEN
-    } else if celsius < TEMP_HOT {
-        ORANGE
+    if celsius < WARM_FROM {
+        TEMP_OK
+    } else if celsius < HOT_FROM {
+        TEMP_WARM
     } else {
-        RED
+        TEMP_HOT
     }
 }
 
@@ -75,26 +74,34 @@ pub fn cards_row(readings: &[Reading], unit: TempUnit, cx: &App) -> (AnyElement,
             "Processor",
             IconName::Cpu,
             value(cpu_temp),
+            value(cpu_load),
             unit,
-            vec![("Load", format_value(value(cpu_load), SensorKind::Load, unit))],
+            vec![(
+                "Load",
+                format_value(value(cpu_load), SensorKind::Load, unit),
+            )],
             cx,
         ))
         .child(card(
             "Graphics card",
             IconName::Gpu,
             value(gpu_temp),
+            value(gpu_load),
             unit,
             vec![
-                ("Load", format_value(value(gpu_load), SensorKind::Load, unit)),
+                (
+                    "Load",
+                    format_value(value(gpu_load), SensorKind::Load, unit),
+                ),
                 (
                     "Power",
                     format_value(value(gpu_power), SensorKind::Power, unit),
                 ),
-                ("VRAM", format_value(value(gpu_vram), SensorKind::Memory, unit)),
                 (
-                    "Fan",
-                    format_value(value(gpu_fan), SensorKind::Load, unit),
+                    "VRAM",
+                    format_value(value(gpu_vram), SensorKind::Memory, unit),
                 ),
+                ("Fan", format_value(value(gpu_fan), SensorKind::Load, unit)),
             ],
             cx,
         ))
@@ -103,11 +110,12 @@ pub fn cards_row(readings: &[Reading], unit: TempUnit, cx: &App) -> (AnyElement,
     (row, shown)
 }
 
-/// Card with a large temperature and detail lines.
+/// Card with a large temperature, a load bar and detail lines.
 fn card(
     title: &str,
     icon: IconName,
     temp: Option<f32>,
+    load: Option<f32>,
     unit: TempUnit,
     lines: Vec<(&'static str, String)>,
     cx: &App,
@@ -115,11 +123,15 @@ fn card(
     let theme = cx.theme();
     let color: Hsla = temp.map_or(theme.muted_foreground, |t| rgb(temp_color(t)).into());
     let big = temp.map_or("-".into(), |t| format!("{:.0}", unit.convert(t)));
-    card_frame(title, icon, big_value(big, unit.symbol(), color, cx), cx).child(
-        v_flex()
-            .gap_1()
-            .children(lines.into_iter().map(|(label, value)| detail(label, value, cx))),
-    )
+    card_frame(title, icon, big_value(big, unit.symbol(), color, cx), cx)
+        .child(duty_bar(load.map(percent), cx))
+        .child(
+            v_flex().gap_1().children(
+                lines
+                    .into_iter()
+                    .map(|(label, value)| stat_line(label, value, cx)),
+            ),
+        )
 }
 
 fn ram_card(used_total: String, load: Option<f32>, cx: &App) -> impl IntoElement {
@@ -131,17 +143,13 @@ fn ram_card(used_total: String, load: Option<f32>, cx: &App) -> impl IntoElement
         big_value(big, "%", theme.foreground, cx),
         cx,
     )
-    .child(duty_bar(load.map(|l| l.round().clamp(0.0, 100.0) as u8), cx))
-    .child(detail("Used", used_total, cx))
+    .child(duty_bar(load.map(percent), cx))
+    .child(stat_line("Used", used_total, cx))
 }
 
-/// "muted label ... value" line.
-fn detail(label: &'static str, value: String, cx: &App) -> impl IntoElement {
-    h_flex()
-        .justify_between()
-        .text_sm()
-        .child(div().text_color(cx.theme().muted_foreground).child(label))
-        .child(value)
+/// Load (%) as a bar fill.
+fn percent(load: f32) -> u8 {
+    load.round().clamp(0.0, 100.0) as u8
 }
 
 fn card_frame(title: &str, icon: IconName, big: gpui_kit::Div, cx: &App) -> gpui_kit::Div {
@@ -158,10 +166,10 @@ mod tests {
 
     #[test]
     fn temperature_thresholds() {
-        assert_eq!(temp_color(45.0), GREEN);
-        assert_eq!(temp_color(59.9), GREEN);
-        assert_eq!(temp_color(60.0), ORANGE);
-        assert_eq!(temp_color(79.9), ORANGE);
-        assert_eq!(temp_color(80.0), RED);
+        assert_eq!(temp_color(45.0), TEMP_OK);
+        assert_eq!(temp_color(59.9), TEMP_OK);
+        assert_eq!(temp_color(60.0), TEMP_WARM);
+        assert_eq!(temp_color(79.9), TEMP_WARM);
+        assert_eq!(temp_color(80.0), TEMP_HOT);
     }
 }

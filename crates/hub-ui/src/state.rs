@@ -10,6 +10,8 @@ use hub_core::{Device, Reading, SensorKind};
 
 /// Beyond this, the daemon is considered disconnected.
 const STALE_AFTER: Duration = Duration::from_secs(3);
+/// A sent config without answer stops showing "pending" after this delay.
+const PENDING_TIMEOUT: Duration = Duration::from_secs(5);
 /// GPU temperature id (NVIDIA backend).
 pub const GPU_TEMP: &str = "gpu0/temp";
 
@@ -36,6 +38,8 @@ pub struct HubState {
     pub notice: Option<Notice>,
     /// A `SetConfig` awaits its answer: the next `State` replaces the draft.
     pub pending_apply: bool,
+    /// When the pending `SetConfig` was sent (see [`HubState::start_pending`]).
+    pending_since: Option<Instant>,
 }
 
 impl HubState {
@@ -50,18 +54,21 @@ impl HubState {
                 self.fans = fans;
                 self.failsafe = failsafe;
             }
-            DaemonMsg::State { config, channels } => self.on_state(config, channels),
+            DaemonMsg::State {
+                config, channels, ..
+            } => self.on_state(config, channels),
             DaemonMsg::Rgb { devices } => self.rgb_devices = devices,
             DaemonMsg::Error { message } => {
                 self.pending_apply = false;
+                self.pending_since = None;
                 self.notice = Some(Notice::Error(message));
             }
         }
     }
 
     fn on_state(&mut self, config: Config, channels: Vec<FanChannel>) {
-        // Unsent local edits survive a profile switch.
-        let keep_edits = self.dirty() && !self.pending_apply;
+        // Unsent local edits survive a profile switch; a timed out apply counts as unsent.
+        let keep_edits = self.dirty() && !self.pending(Instant::now());
         match self.draft.as_mut() {
             Some(draft) if keep_edits => draft.active_profile.clone_from(&config.active_profile),
             _ => self.draft = Some(config.clone()),
@@ -69,6 +76,21 @@ impl HubState {
         self.config = Some(config);
         self.channels = channels;
         self.pending_apply = false;
+        self.pending_since = None;
+    }
+
+    /// Marks a `SetConfig` as sent: the UI shows it pending until the answer or 5 s.
+    pub fn start_pending(&mut self) {
+        self.pending_apply = true;
+        self.pending_since = Some(Instant::now());
+    }
+
+    /// A sent config awaits the service answer (at most 5 s).
+    pub fn pending(&self, now: Instant) -> bool {
+        self.pending_apply
+            && self
+                .pending_since
+                .is_none_or(|at| now.saturating_duration_since(at) < PENDING_TIMEOUT)
     }
 
     /// Instant of the last received snapshot (`None`: daemon never seen).
@@ -106,6 +128,15 @@ impl HubState {
                 .as_ref()
                 .is_some_and(|d| settings_for(d, &channel.id).mode != FanMode::Auto);
         fan_connected(channel_rpm(channel, self.readings()), piloted)
+    }
+}
+
+/// Short mode text: "Auto", "Fixed 50 %", "Curve".
+pub fn mode_label(mode: &FanMode) -> String {
+    match mode {
+        FanMode::Auto => "Auto".into(),
+        FanMode::Fixed { duty } => format!("Fixed {duty} %"),
+        FanMode::Curve { .. } => "Curve".into(),
     }
 }
 
@@ -253,8 +284,15 @@ pub fn duplicate_active(config: &mut Config, name: &str) -> Result<(), String> {
 pub fn rename_active(config: &mut Config, name: &str) -> Result<(), String> {
     let name = check_new_name(config, name)?;
     let profile = active_mut(config).ok_or("No active profile.")?;
-    profile.name.clone_from(&name);
+    let old = std::mem::replace(&mut profile.name, name.clone());
     config.active_profile = name;
+    let rules = &mut config.automations;
+    let targets = rules.process_rules.iter_mut().map(|r| &mut r.profile);
+    for target in targets.chain(rules.schedules.iter_mut().map(|r| &mut r.profile)) {
+        if *target == old {
+            target.clone_from(&config.active_profile);
+        }
+    }
     Ok(())
 }
 
@@ -264,6 +302,9 @@ pub fn delete_profile(config: &mut Config, name: &str) -> Result<(), String> {
         return Err("Cannot delete the last profile.".into());
     }
     config.profiles.retain(|p| p.name != name);
+    let rules = &mut config.automations;
+    rules.process_rules.retain(|r| r.profile != name);
+    rules.schedules.retain(|r| r.profile != name);
     if config.active_profile == name {
         config.active_profile = config.profiles[0].name.clone();
     }
@@ -273,6 +314,7 @@ pub fn delete_profile(config: &mut Config, name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hub_core::config::{ProcessRule, ScheduleRule};
 
     fn channel(id: &str) -> FanChannel {
         FanChannel {
@@ -330,6 +372,7 @@ mod tests {
         state.receive(DaemonMsg::State {
             config: Config::default(),
             channels: channels.clone(),
+            auto_profile: None,
         });
         assert!(!state.dirty());
         if let Some(draft) = state.draft.as_mut() {
@@ -337,10 +380,14 @@ mod tests {
         }
         assert!(state.dirty());
         // Profile switch on the daemon side: the local edit is kept.
-        let switched = Config { active_profile: "Silent".into(), ..Config::default() };
+        let switched = Config {
+            active_profile: "Silent".into(),
+            ..Config::default()
+        };
         state.receive(DaemonMsg::State {
             config: switched.clone(),
             channels: channels.clone(),
+            auto_profile: None,
         });
         let draft = state.draft.clone().unwrap_or_default();
         assert_eq!(draft.poll_interval_ms, 1500);
@@ -350,8 +397,51 @@ mod tests {
         state.receive(DaemonMsg::State {
             config: switched,
             channels,
+            auto_profile: None,
         });
         assert!(!state.dirty());
+    }
+
+    #[test]
+    fn pending_clears_on_answer_or_timeout() {
+        let mut state = HubState::default();
+        let now = Instant::now();
+        assert!(!state.pending(now));
+        state.start_pending();
+        assert!(state.pending(now));
+        assert!(!state.pending(now + Duration::from_secs(6)));
+        state.receive(DaemonMsg::State {
+            config: Config::default(),
+            channels: Vec::new(),
+            auto_profile: None,
+        });
+        assert!(!state.pending(now));
+        state.start_pending();
+        state.receive(DaemonMsg::Error {
+            message: "x".into(),
+        });
+        assert!(!state.pending(now));
+    }
+
+    #[test]
+    fn timed_out_apply_keeps_local_edits() {
+        let mut state = HubState::default();
+        state.receive(DaemonMsg::State {
+            config: Config::default(),
+            channels: Vec::new(),
+            auto_profile: None,
+        });
+        if let Some(draft) = state.draft.as_mut() {
+            draft.poll_interval_ms = 1500;
+        }
+        state.start_pending();
+        state.pending_since = Instant::now().checked_sub(Duration::from_secs(6));
+        state.receive(DaemonMsg::State {
+            config: Config::default(),
+            channels: Vec::new(),
+            auto_profile: None,
+        });
+        assert_eq!(state.draft.map(|d| d.poll_interval_ms), Some(1500));
     }
 
     #[test]
@@ -389,6 +479,32 @@ mod tests {
             ..Config::default()
         };
         assert!(delete_profile(&mut single, "Only").is_err());
+    }
+
+    #[test]
+    fn profile_changes_follow_automations() {
+        let mut config = Config::default();
+        config.automations.process_rules.push(ProcessRule {
+            exe: "game.exe".into(),
+            profile: "Balanced".into(),
+        });
+        config.automations.schedules.push(ScheduleRule {
+            start: 0,
+            end: 60,
+            profile: "Balanced".into(),
+        });
+        config.automations.schedules.push(ScheduleRule {
+            start: 60,
+            end: 120,
+            profile: "Silent".into(),
+        });
+        assert!(rename_active(&mut config, "Main").is_ok());
+        assert_eq!(config.automations.process_rules[0].profile, "Main");
+        assert_eq!(config.automations.schedules[0].profile, "Main");
+        assert_eq!(config.automations.schedules[1].profile, "Silent");
+        assert!(delete_profile(&mut config, "Main").is_ok());
+        assert!(config.automations.process_rules.is_empty());
+        assert_eq!(config.automations.schedules.len(), 1);
     }
 
     #[test]

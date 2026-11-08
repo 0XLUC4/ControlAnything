@@ -8,6 +8,7 @@ hub-core.workspace = true
 gpui-kit.workspace = true
 async-channel.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tray-icon = "0.26"
@@ -20,3 +21,22 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # tray-icon (libappindicator backend) relies on GTK 3: same version as its own.
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+
+# Per-user audio endpoints and network adapters (System pages), updater launch.
+[target.'cfg(windows)'.dependencies]
+windows-core = "0.62"
+windows = { workspace = true, features = [
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }

@@ -2,11 +2,15 @@
 //! global daemon settings and application preferences.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
+use gpui_kit::component::separator::Separator;
 use gpui_kit::component::switch::Switch;
+use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -17,11 +21,39 @@ use hub_core::config::Config;
 use hub_core::ipc::ClientMsg;
 
 use crate::app::HubApp;
-use crate::fans::waiting;
 use crate::hotkeys::hotkey_label;
 use crate::prefs::{Prefs, TempUnit, set_autostart};
 use crate::state::{Notice, delete_profile, duplicate_active, rename_active};
-use crate::widgets::{GREEN, choice, field, section, solid_tag, stepper};
+use crate::widgets::{
+    GREEN, field, loading, muted, page_header, section, segmented, solid_tag, stepper,
+};
+
+/// How long a profile switch shows as loading without an answer from the service.
+const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Settings page state: actions waiting on a file dialog or on the service.
+#[derive(Default)]
+pub struct SettingsPage {
+    /// Open file dialog: `Export` or `Import`.
+    dialog: Option<Dialog>,
+    /// Profile switch sent to the service, and when.
+    activating: Option<(String, Instant)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Dialog {
+    Export,
+    Import,
+}
+
+impl SettingsPage {
+    /// The switch to `name` was sent less than [`ACTIVATE_TIMEOUT`] ago.
+    fn is_activating(&self, name: &str, now: Instant) -> bool {
+        self.activating.as_ref().is_some_and(|(target, at)| {
+            target == name && now.saturating_duration_since(*at) < ACTIVATE_TIMEOUT
+        })
+    }
+}
 
 impl HubApp {
     /// Edits the preferences, applies their effects (autostart, hotkeys) then saves them.
@@ -85,6 +117,8 @@ impl HubApp {
         };
         let directory = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let chosen = cx.prompt_for_new_path(&directory, Some("controlanything.toml"));
+        self.settings.dialog = Some(Dialog::Export);
+        cx.notify();
         cx.spawn(async move |this, cx| {
             let notice = match chosen.await {
                 Ok(Ok(Some(path))) => Some(match std::fs::write(&path, text) {
@@ -96,10 +130,11 @@ impl HubApp {
                 Ok(Ok(None)) | Err(_) => None,
             };
             let _ = this.update(cx, |app, cx| {
+                app.settings.dialog = None;
                 if notice.is_some() {
                     app.state.notice = notice;
-                    cx.notify();
                 }
+                cx.notify();
             });
         })
         .detach();
@@ -113,17 +148,26 @@ impl HubApp {
             multiple: false,
             prompt: Some("Import".into()),
         });
+        self.settings.dialog = Some(Dialog::Import);
+        cx.notify();
         cx.spawn(async move |this, cx| {
-            let path = match chosen.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Err(err)) => {
-                    let _ = this.update(cx, |app, cx| {
-                        app.notify_error(format!("Dialog unavailable: {err}"), cx);
-                    });
-                    None
-                }
-                Ok(Ok(None)) | Err(_) => None,
-            };
+            let chosen = chosen.await;
+            let path = this
+                .update(cx, |app, cx| {
+                    app.settings.dialog = None;
+                    cx.notify();
+                    match chosen {
+                        Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                        Ok(Err(err)) => {
+                            app.notify_error(format!("Dialog unavailable: {err}"), cx);
+                            None
+                        }
+                        // Cancelled by the user.
+                        Ok(Ok(None)) | Err(_) => None,
+                    }
+                })
+                .ok()
+                .flatten();
             let Some(path) = path else {
                 return;
             };
@@ -136,9 +180,11 @@ impl HubApp {
                 });
             let _ = this.update(cx, |app, cx| match parsed {
                 Ok(config) => {
-                    app.state.pending_apply = true;
-                    app.state.notice =
-                        Some(Notice::Info(format!("Configuration imported: {}", path.display())));
+                    app.state.start_pending();
+                    app.state.notice = Some(Notice::Info(format!(
+                        "Configuration imported: {}",
+                        path.display()
+                    )));
                     app.send(ClientMsg::SetConfig { config });
                     cx.notify();
                 }
@@ -149,6 +195,12 @@ impl HubApp {
     }
 
     pub fn render_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let header = page_header(
+            IconName::Settings,
+            "Settings",
+            "Profiles, safety and preferences",
+            cx,
+        );
         let app_prefs = self.app_section(cx);
         let (Some(draft), Some(config), Some(controls)) = (
             self.state.draft.as_ref(),
@@ -158,13 +210,15 @@ impl HubApp {
             return v_flex()
                 .gap_4()
                 .max_w(px(760.))
-                .child(waiting(cx))
+                .child(header)
+                .child(loading("Waiting for the service configuration...", cx))
                 .child(app_prefs)
                 .into_any_element();
         };
         let theme = cx.theme().clone();
         let unit = self.prefs.temperature_unit;
         let hotkeys_on = self.prefs.hotkeys && self.hotkeys.is_some();
+        let now = Instant::now();
 
         let reset_profile = self.reset_profile_button("reset-profile-settings", cx);
         let rows = draft.profiles.iter().enumerate().map(|(i, profile)| {
@@ -172,6 +226,7 @@ impl HubApp {
             let is_active = draft.active_profile == profile.name;
             // Only a profile known to the daemon can be activated directly.
             let known = config.profiles.iter().any(|p| p.name == profile.name);
+            let activating = self.settings.is_activating(&name, now);
             let activate = name.clone();
             let delete = name.clone();
             // Hotkey based on the order of the profiles known to the daemon.
@@ -190,23 +245,16 @@ impl HubApp {
                     h_flex()
                         .gap_2()
                         .child(div().text_sm().font_semibold().child(name))
-                        .when(is_active, |row| row.child(solid_tag(GREEN).small().child("active")))
+                        .when(is_active, |row| {
+                            row.child(solid_tag(GREEN).small().child("Active"))
+                        })
                         .when_some(shortcut, |row, keys| {
-                            row.child(
-                                div()
-                                    .text_xs()
-                                    .px_1()
-                                    .rounded(px(4.))
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .text_color(theme.muted_foreground)
-                                    .child(keys),
-                            )
+                            row.child(Tag::secondary().outline().small().child(keys))
                         }),
                 )
                 .child(
                     h_flex()
-                        .gap_2()
+                        .gap_1()
                         .when(!is_active && known, |row| {
                             row.child(
                                 Button::new(("activate", i))
@@ -214,19 +262,21 @@ impl HubApp {
                                     .outline()
                                     .icon(IconName::Play)
                                     .label("Activate")
-                                    .on_click(cx.listener(move |app, _, _, _| {
-                                        app.send(ClientMsg::SetProfile {
-                                            name: activate.clone(),
-                                        });
+                                    .loading(activating)
+                                    .on_click(cx.listener(move |app, _, _, cx| {
+                                        app.settings.activating =
+                                            Some((activate.clone(), Instant::now()));
+                                        app.activate_profile(activate.clone());
+                                        cx.notify();
                                     })),
                             )
                         })
                         .child(
                             Button::new(("delete", i))
                                 .small()
-                                .danger()
+                                .ghost()
                                 .icon(IconName::Trash)
-                                .label("Delete")
+                                .tooltip("Delete profile")
                                 .on_click(cx.listener(move |app, _, _, cx| {
                                     let target = delete.clone();
                                     app.edit_profiles(cx, |c, _| delete_profile(c, &target));
@@ -235,7 +285,8 @@ impl HubApp {
                 )
         });
 
-        let profiles = section("Profiles", cx)
+        let dialog = self.settings.dialog;
+        let profiles = section(IconName::Layers, "Profiles", cx)
             .children(rows)
             .child(
                 h_flex()
@@ -250,8 +301,8 @@ impl HubApp {
                         Button::new("duplicate")
                             .small()
                             .outline()
-                            .icon(IconName::Plus)
-                            .label("Duplicate active profile")
+                            .icon(IconName::Copy)
+                            .label("Duplicate active")
                             .on_click(cx.listener(|app, _, _, cx| {
                                 app.edit_profiles(cx, duplicate_active);
                             })),
@@ -261,32 +312,24 @@ impl HubApp {
                             .small()
                             .outline()
                             .icon(IconName::Pencil)
-                            .label("Rename active profile")
+                            .label("Rename active")
                             .on_click(cx.listener(|app, _, _, cx| {
                                 app.edit_profiles(cx, rename_active);
                             })),
                     ),
             )
+            .child(Separator::horizontal())
             .child(
                 h_flex()
                     .gap_2()
-                    .child(reset_profile)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child("Every fan of the active profile goes back to Auto (BIOS)."),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
+                    .flex_wrap()
                     .child(
                         Button::new("export")
                             .small()
                             .outline()
-                            .icon(IconName::Download)
+                            .icon(IconName::FileDown)
                             .label("Export (.toml)...")
+                            .loading(dialog == Some(Dialog::Export))
                             .on_click(cx.listener(|app, _, _, cx| app.export_config(cx))),
                     )
                     .child(
@@ -295,14 +338,24 @@ impl HubApp {
                             .outline()
                             .icon(IconName::FolderOpen)
                             .label("Import (.toml)...")
+                            .loading(dialog == Some(Dialog::Import) || self.is_pending())
                             .on_click(cx.listener(|app, _, _, cx| app.import_config(cx))),
-                    ),
+                    )
+                    .child(reset_profile),
+            )
+            .child(
+                muted(
+                    "Reset profile: every fan of the active profile goes back to Auto (BIOS).",
+                    cx,
+                )
+                .text_xs(),
             );
 
         let failsafe = &draft.failsafe;
-        let safety = section("Safety (failsafe)", cx)
-            .child(div().text_sm().text_color(theme.muted_foreground).child(
+        let safety = section(IconName::ShieldAlert, "Safety (failsafe)", cx)
+            .child(muted(
                 "Above these thresholds, all controlled fans go to 100 %.",
+                cx,
             ))
             .child(field(
                 "CPU critical threshold",
@@ -341,28 +394,37 @@ impl HubApp {
                 cx,
             ));
 
-        let polling = section("Sampling", cx).child(field(
-            "Polling interval",
-            stepper(
-                "poll",
-                format!("{} ms", draft.poll_interval_ms),
-                cx.listener(|app, _, _, cx| {
-                    app.edit_config(cx, |c| {
-                        c.poll_interval_ms = c.poll_interval_ms.saturating_sub(100).max(500);
-                    });
-                }),
-                cx.listener(|app, _, _, cx| {
-                    app.edit_config(cx, |c| {
-                        c.poll_interval_ms = (c.poll_interval_ms + 100).min(2000);
-                    });
-                }),
-            ),
-            cx,
-        ));
+        let polling = section(IconName::Timer, "Sampling", cx)
+            .child(field(
+                "Polling interval",
+                stepper(
+                    "poll",
+                    format!("{} ms", draft.poll_interval_ms),
+                    cx.listener(|app, _, _, cx| {
+                        app.edit_config(cx, |c| {
+                            c.poll_interval_ms = c.poll_interval_ms.saturating_sub(100).max(500);
+                        });
+                    }),
+                    cx.listener(|app, _, _, cx| {
+                        app.edit_config(cx, |c| {
+                            c.poll_interval_ms = (c.poll_interval_ms + 100).min(2000);
+                        });
+                    }),
+                ),
+                cx,
+            ))
+            .child(
+                muted(
+                    "How often the service reads sensors and updates fans. Lower reacts faster.",
+                    cx,
+                )
+                .text_xs(),
+            );
 
         v_flex()
             .gap_4()
             .max_w(px(760.))
+            .child(header)
             .child(profiles)
             .child(safety)
             .child(polling)
@@ -373,36 +435,34 @@ impl HubApp {
     /// Application preferences (`ui.toml` file, independent of the daemon).
     fn app_section(&self, cx: &mut Context<Self>) -> AnyElement {
         let prefs = &self.prefs;
-        let theme = cx.theme().clone();
-        let toggle = |id: &'static str, checked: bool, apply: fn(&mut Prefs, bool), cx: &mut Context<Self>| {
-            Switch::new(id)
-                .checked(checked)
-                .on_click(cx.listener(move |app, checked: &bool, _, cx| {
+        let toggle = |id: &'static str,
+                      checked: bool,
+                      apply: fn(&mut Prefs, bool),
+                      cx: &mut Context<Self>| {
+            Switch::new(id).checked(checked).on_click(cx.listener(
+                move |app, checked: &bool, _, cx| {
                     let checked = *checked;
                     app.edit_prefs(cx, |p| apply(p, checked));
-                }))
+                },
+            ))
         };
-        let unit = prefs.temperature_unit;
-        let units = h_flex()
-            .gap_2()
-            .child(
-                choice("unit-c", "°C", unit == TempUnit::Celsius).on_click(cx.listener(
-                    |app, _, _, cx| app.edit_prefs(cx, |p| p.temperature_unit = TempUnit::Celsius),
-                )),
-            )
-            .child(
-                choice("unit-f", "°F", unit == TempUnit::Fahrenheit).on_click(cx.listener(
-                    |app, _, _, cx| {
-                        app.edit_prefs(cx, |p| p.temperature_unit = TempUnit::Fahrenheit);
-                    },
-                )),
-            );
+        let selected = usize::from(prefs.temperature_unit == TempUnit::Fahrenheit);
+        let units = segmented("units", ["°C", "°F"], selected).on_click(cx.listener(
+            |app, clicks: &Vec<usize>, _, cx| {
+                let unit = if clicks.first() == Some(&1) {
+                    TempUnit::Fahrenheit
+                } else {
+                    TempUnit::Celsius
+                };
+                app.edit_prefs(cx, |p| p.temperature_unit = unit);
+            },
+        ));
         let hotkeys_label: SharedString = if self.hotkeys.is_some() {
             "Global hotkeys Ctrl+Shift+F1...F4 (profiles 1 to 4)".into()
         } else {
             "Global hotkeys (unavailable on this system)".into()
         };
-        section("Application", cx)
+        section(IconName::Settings2, "Application", cx)
             .child(field(
                 "Launch ControlAnything at login",
                 toggle("launch-at-startup", prefs.launch_at_startup, |p, v| p.launch_at_startup = v, cx),
@@ -424,9 +484,27 @@ impl HubApp {
                 cx,
             ))
             .child(field("Temperature unit", units, cx))
-            .child(div().text_sm().text_color(theme.muted_foreground).child(
+            .child(Alert::info(
+                "service-info",
                 "Quitting ControlAnything does not stop fan control: the controlanythingd service keeps driving the fans.",
             ))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activation_shows_loading_until_timeout() {
+        let now = Instant::now();
+        let page = SettingsPage {
+            dialog: None,
+            activating: Some(("Silent".into(), now)),
+        };
+        assert!(page.is_activating("Silent", now));
+        assert!(!page.is_activating("Gaming", now));
+        assert!(!page.is_activating("Silent", now + ACTIVATE_TIMEOUT));
     }
 }

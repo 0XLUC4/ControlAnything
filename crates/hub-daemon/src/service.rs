@@ -3,14 +3,17 @@
 //! The service runs as LocalSystem, starts at boot and restarts 5 s after a failure.
 //! Stopping (Stop/shutdown) goes through the same path as the console: fans handed back to the BIOS.
 
+use crate::control::Command;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, mpsc::Sender};
 use std::time::{Duration, Instant};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use windows_service::service::{
-    Service, ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept,
-    ServiceErrorControl, ServiceExitCode, ServiceFailureActions, ServiceFailureResetPeriod,
-    ServiceInfo, ServiceStartType, ServiceState, ServiceStatus, ServiceType,
+    PowerEventParam, Service, ServiceAccess, ServiceAction, ServiceActionType, ServiceControl,
+    ServiceControlAccept, ServiceErrorControl, ServiceExitCode, ServiceFailureActions,
+    ServiceFailureResetPeriod, ServiceInfo, ServiceStartType, ServiceState, ServiceStatus,
+    ServiceType,
 };
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
@@ -139,7 +142,9 @@ fn stop_and_delete(service: &Service, name: &str) -> anyhow::Result<()> {
         .query_status()
         .map_err(|e| explain(e, "service status"))?;
     if status.current_state != ServiceState::Stopped {
-        service.stop().map_err(|e| explain(e, "stopping the service"))?;
+        service
+            .stop()
+            .map_err(|e| explain(e, "stopping the service"))?;
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let state = service
@@ -187,12 +192,8 @@ pub fn run_dispatcher() -> anyhow::Result<()> {
     let (writer, _guard) = tracing_appender::non_blocking(appender);
     crate::init_tracing(writer);
     // `_guard` lives until the service ends: it flushes the remaining logs on exit.
-    service_dispatcher::start(SERVICE_NAME, ffi_service_main).map_err(|e| {
-        explain(
-            e,
-            "launch by the service manager (use `install`)",
-        )
-    })
+    service_dispatcher::start(SERVICE_NAME, ffi_service_main)
+        .map_err(|e| explain(e, "launch by the service manager (use `install`)"))
 }
 
 fn service_main(_arguments: Vec<OsString>) {
@@ -203,9 +204,25 @@ fn service_main(_arguments: Vec<OsString>) {
 
 fn run_service() -> anyhow::Result<()> {
     let (stop_tx, mut stop_rx) = tokio::sync::mpsc::unbounded_channel();
+    // Control thread commands, known once the daemon has started.
+    let commands: Arc<OnceLock<Sender<Command>>> = Arc::default();
+    let power = commands.clone();
     let handler = move |control| match control {
         ServiceControl::Stop | ServiceControl::Shutdown => {
             let _ = stop_tx.send(control); // service already stopping: nothing to do
+            ServiceControlHandlerResult::NoError
+        }
+        ServiceControl::PowerEvent(event) => {
+            let command = match event {
+                PowerEventParam::Suspend => Some(Command::Suspend),
+                PowerEventParam::ResumeAutomatic | PowerEventParam::ResumeSuspend => {
+                    Some(Command::Resume)
+                }
+                _ => None,
+            };
+            if let (Some(command), Some(tx)) = (command, power.get()) {
+                let _ = tx.send(command); // control thread stopped: nothing to do
+            }
             ServiceControlHandlerResult::NoError
         }
         ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
@@ -214,7 +231,9 @@ fn run_service() -> anyhow::Result<()> {
     let status = service_control_handler::register(SERVICE_NAME, handler)?;
     let report = |state: ServiceState, exit_code: ServiceExitCode| {
         let controls_accepted = if state == ServiceState::Running {
-            ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN
+            ServiceControlAccept::STOP
+                | ServiceControlAccept::SHUTDOWN
+                | ServiceControlAccept::POWER_EVENT
         } else {
             ServiceControlAccept::empty()
         };
@@ -238,6 +257,7 @@ fn run_service() -> anyhow::Result<()> {
         .and_then(|runtime| {
             runtime.block_on(async {
                 let daemon = crate::start()?;
+                let _ = commands.set(daemon.commands.clone()); // set once, here
                 report(ServiceState::Running, ServiceExitCode::NO_ERROR);
                 tracing::info!("service {SERVICE_NAME} started");
                 crate::run(daemon, async {

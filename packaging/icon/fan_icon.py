@@ -11,18 +11,21 @@ def ellipse(cx, cy, a, b, rot, n=72):
             for t in (2 * math.pi * i / n for i in range(n))]
 
 
+GLYPH = 0.78  # glyph scale inside the black tile (1.0 = edge to edge)
+
+
 def polar(r, ang):
-    return C + r * math.cos(ang), C + r * math.sin(ang)
+    return C + GLYPH * r * math.cos(ang), C + GLYPH * r * math.sin(ang)
 
 
 shapes = []
 for k in range(4):
     base = math.radians(-80 + 90 * k)
     lx, ly = polar(16.5, base + math.radians(20))
-    shapes.append(ellipse(lx, ly, 11.0, 8.6, base - math.radians(15)))  # lobe
+    shapes.append(ellipse(lx, ly, GLYPH * 11.0, GLYPH * 8.6, base - math.radians(15)))  # lobe
     nx, ny = polar(8.0, base - math.radians(2))
-    shapes.append(ellipse(nx, ny, 7.0, 3.4, base + math.radians(18)))  # neck to the hub
-HUB, HOLE = 6.8, 2.8
+    shapes.append(ellipse(nx, ny, GLYPH * 7.0, GLYPH * 3.4, base + math.radians(18)))  # neck to the hub
+HUB, HOLE = GLYPH * 6.8, GLYPH * 2.8
 
 
 def render(size):

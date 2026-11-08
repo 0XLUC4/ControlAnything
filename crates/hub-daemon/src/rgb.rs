@@ -54,12 +54,13 @@ struct Driven {
 impl Driven {
     fn render(&mut self, config: &RgbConfig, readings: &[Reading], elapsed: Duration) {
         let info = self.device.info();
+        let brightness = config.brightness_for(&info.id);
         let rendered = info
             .zones
             .iter()
             .map(|zone| {
                 let effect = hub_rgb::effects::effect_for(config, &info.id, &zone.id);
-                hub_rgb::effects::render(effect, zone.leds, elapsed, readings, config.brightness)
+                hub_rgb::effects::render(effect, zone.leds, elapsed, readings, brightness)
             })
             .collect();
         let frame = if config.disabled.contains(&info.id) { None } else { assemble(&info.zones, rendered) };
@@ -188,19 +189,21 @@ mod tests {
         );
     }
 
-    /// Counts the writes and restores of a fake device.
+    /// Counts the writes and restores of a fake device, keeps the last frame.
     struct Fake {
         info: RgbDeviceInfo,
         frames: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         restores: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        last: std::sync::Arc<std::sync::Mutex<Vec<Vec<Rgb>>>>,
     }
 
     impl RgbDevice for Fake {
         fn info(&self) -> &RgbDeviceInfo {
             &self.info
         }
-        fn set_frame(&mut self, _: &[Vec<Rgb>]) -> Result<(), hub_core::HwError> {
+        fn set_frame(&mut self, frame: &[Vec<Rgb>]) -> Result<(), hub_core::HwError> {
             self.frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            *self.last.lock().unwrap() = frame.to_vec();
             Ok(())
         }
         fn restore(&mut self) {
@@ -215,6 +218,7 @@ mod tests {
             info: RgbDeviceInfo { id: "d".into(), label: "D".into(), zones: vec![zone("z", 2)] },
             frames: Default::default(),
             restores: Default::default(),
+            last: Default::default(),
         };
         let (frames, restores) = (fake.frames.clone(), fake.restores.clone());
         let mut driven = Driven { device: Box::new(fake), software: false, last_error: None };
@@ -227,6 +231,23 @@ mod tests {
             driven.render(&config, &[], Duration::ZERO);
         }
         assert_eq!((frames.load(Relaxed), restores.load(Relaxed)), (1, 1));
+    }
+
+    #[test]
+    fn device_brightness_scales_global_brightness() {
+        let fake = Fake {
+            info: RgbDeviceInfo { id: "d".into(), label: "D".into(), zones: vec![zone("z", 1)] },
+            frames: Default::default(),
+            restores: Default::default(),
+            last: Default::default(),
+        };
+        let last = fake.last.clone();
+        let mut driven = Driven { device: Box::new(fake), software: false, last_error: None };
+        let mut config = RgbConfig { brightness: 50, ..RgbConfig::default() };
+        config.zones.insert("d/z".into(), hub_core::rgb::Effect::Static { color: Rgb::new(200, 100, 0) });
+        config.device_brightness.insert("d".into(), 50);
+        driven.render(&config, &[], Duration::ZERO);
+        assert_eq!(*last.lock().unwrap(), vec![vec![Rgb::new(50, 25, 0)]]);
     }
 
     #[test]
