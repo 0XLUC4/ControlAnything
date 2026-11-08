@@ -9,16 +9,19 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::InputState;
+use gpui_kit::component::popover::Popover;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, TitleBar, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, TitleBar, h_flex,
+    tooltip::Tooltip, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AnyWindowHandle, AppContext as _, Context, Entity, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div,
+    Anchor, AnyElement, AnyWindowHandle, AppContext as _, Context, Entity, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Window, div,
     img, px,
 };
 use hub_core::ipc::{ClientMsg, DaemonMsg};
@@ -361,21 +364,28 @@ impl HubApp {
                     cx.notify();
                 }))
         };
-        let status = if self.state.connected() {
-            solid_tag(GREEN).rounded_full().child("Service connected")
-        } else {
-            solid_tag(RED).rounded_full().child("Service offline")
-        };
+        let connected = self.state.connected();
         let group = |label: &'static str, items: Vec<SidebarMenuItem>| {
             SidebarGroup::new(label).child(SidebarMenu::new().gap_1().children(items))
         };
         Sidebar::new("nav")
             .w(px(220.))
-            .footer(h_flex().w_full().justify_center().child(status))
             .child(group(
                 "Control",
                 vec![
-                    item("Dashboard", IconName::LayoutDashboard, Page::Dashboard, cx),
+                    item("Dashboard", IconName::LayoutDashboard, Page::Dashboard, cx).suffix(
+                        move |_, _| {
+                            let (icon, color, tip) = if connected {
+                                (IconName::Check, GREEN, "Service connected")
+                            } else {
+                                (IconName::X, RED, "Service offline")
+                            };
+                            div()
+                                .id("service-status")
+                                .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
+                                .child(Icon::new(icon).small().text_color(gpui_kit::rgb(color)))
+                        },
+                    ),
                     item("Fans", IconName::Fan, Page::Fans, cx),
                     item("Lighting", IconName::Lightbulb, Page::Lighting, cx),
                     item("Devices", IconName::Microchip, Page::Devices, cx),
@@ -403,7 +413,7 @@ impl HubApp {
             .as_ref()
             .filter(|_| self.state.config.is_some())
             .map(|c| c.profile_select.clone());
-        TitleBar::new().child(
+        TitleBar::new().bg(cx.theme().background).child(
             h_flex()
                 .flex_1()
                 .justify_between()
@@ -415,8 +425,7 @@ impl HubApp {
                         .text_sm()
                         .font_semibold()
                         .child(img(BRAND_ICON).size(px(18.)).rounded_sm())
-                        .child("ControlAnything")
-                        .child(div().occlude().child(self.update_button(cx))),
+                        .child("ControlAnything"),
                 )
                 .child(
                     h_flex()
@@ -441,24 +450,101 @@ impl HubApp {
                                         .w(px(220.)),
                                 ),
                             )
-                        }),
+                        })
+                        .child(div().occlude().child(self.update_popover(cx))),
                 ),
         )
     }
 
-    /// "Check for updates" icon button, highlighted when a newer version is known.
-    fn update_button(&self, cx: &mut Context<Self>) -> Button {
-        let button = Button::new("check-update")
+    /// Update icon (blue dot when a newer version is known) opening a small popup:
+    /// version, release notes and "Update and restart", or "Check again" when up to date.
+    fn update_popover(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let trigger = Button::new("check-update")
             .small()
+            .ghost()
             .icon(IconName::CircleArrowUp)
-            .tooltip("Check for updates")
-            .loading(updater::busy(&self.update))
-            .on_click(cx.listener(|app, _, window, cx| updater::on_update_click(app, window, cx)));
-        if updater::has_update(&self.update) {
-            button.primary()
-        } else {
-            button.ghost()
-        }
+            .tooltip("Updates")
+            .loading(updater::busy(&self.update));
+        let app = cx.entity();
+        let popover = Popover::new("update-popover")
+            .anchor(Anchor::TopRight)
+            .trigger(trigger)
+            .content(move |_, _, cx| {
+                let (status, release, busy) = {
+                    let state = &app.read(cx).update;
+                    (updater::status(state), updater::release(state), updater::busy(state))
+                };
+                let muted = cx.theme().muted_foreground;
+                let current = format!("You have {}.", updater::CURRENT);
+                let action = app.clone();
+                let body = match release {
+                    Some(release) => v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_base()
+                                .font_semibold()
+                                .child(format!("ControlAnything {} is available", release.version)),
+                        )
+                        .child(div().text_xs().text_color(muted).child(current))
+                        .when(!release.notes.is_empty(), |col| {
+                            col.child(div().text_sm().child(release.notes))
+                        })
+                        .child(
+                            Button::new("update-install")
+                                .primary()
+                                .w_full()
+                                .label("Update and restart")
+                                .loading(busy)
+                                .disabled(busy)
+                                .on_click(move |_, _, cx| {
+                                    action.update(cx, updater::install_latest);
+                                }),
+                        )
+                        .child(div().text_xs().text_color(muted).child(
+                            "Fans return to firmware control while the service restarts.",
+                        )),
+                    None => v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_base()
+                                .font_semibold()
+                                .child("ControlAnything is up to date"),
+                        )
+                        .child(div().text_xs().text_color(muted).child(current))
+                        .child(
+                            Button::new("update-refresh")
+                                .outline()
+                                .w_full()
+                                .icon(IconName::RefreshCw)
+                                .label("Check again")
+                                .loading(busy)
+                                .disabled(busy)
+                                .on_click(move |_, _, cx| {
+                                    action.update(cx, updater::check);
+                                }),
+                        ),
+                };
+                body.w(px(300.)).when_some(status, |col, status| {
+                    col.child(div().text_xs().text_color(muted).child(status))
+                })
+            });
+        // The dot sits over the icon corner and lets clicks through to the button.
+        div()
+            .relative()
+            .child(popover)
+            .when(updater::has_update(&self.update), |wrap| {
+                wrap.child(
+                    div()
+                        .absolute()
+                        .top(px(2.))
+                        .right(px(2.))
+                        .size(px(7.))
+                        .rounded_full()
+                        .bg(cx.theme().primary),
+                )
+            })
     }
 
     /// Closable success or error banner.

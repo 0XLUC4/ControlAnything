@@ -1,4 +1,4 @@
-//! Self-update from the GitHub releases (Windows): check, confirm, download, run the installer.
+//! Self-update from the GitHub releases (Windows): check, download, run the installer.
 //!
 //! HTTP goes through `curl.exe` (shipped with Windows 10+): no TLS stack in the app.
 //! The NSIS installer stops the service and the running app, then restarts both (`/P /R`).
@@ -6,19 +6,15 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
-use gpui_kit::{Context, Window};
+use gpui_kit::Context;
 
 use crate::app::HubApp;
-use crate::state::Notice;
 
 const LATEST_URL: &str = "https://api.github.com/repos/0XLUC4/ControlAnything/releases/latest";
 /// Only installers from this repository are downloaded.
 const DOWNLOAD_PREFIX: &str = "https://github.com/0XLUC4/ControlAnything/releases/download/";
-const CURRENT: &str = env!("CARGO_PKG_VERSION");
-/// A second click within this delay confirms the install.
-const CONFIRM_WINDOW: Duration = Duration::from_secs(15);
+pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 /// Download folders are `%TEMP%\controlanything-update-<random>`.
 const DIR_PREFIX: &str = "controlanything-update-";
 
@@ -30,6 +26,8 @@ pub struct Release {
     size: u64,
     /// Lowercase hex SHA-256 from the GitHub asset `digest`.
     sha256: String,
+    /// Release notes (GitHub `body`), shortened for the popup.
+    pub notes: String,
 }
 
 /// What the update checks found; shared with the background threads.
@@ -37,8 +35,8 @@ pub struct Release {
 pub struct UpdateState {
     newer: Arc<Mutex<Option<Release>>>,
     busy: Arc<AtomicBool>,
-    /// First click on an available update: install on a second click until this instant.
-    confirm_until: Option<Instant>,
+    /// Result of the last action, shown in the update popup.
+    message: Option<String>,
 }
 
 impl UpdateState {
@@ -75,68 +73,63 @@ pub fn has_update(state: &UpdateState) -> bool {
     lock(&state.newer).is_some()
 }
 
-/// A check or download runs: the button shows a spinner and ignores clicks.
+/// The newer release, if any (version and notes for the popup).
+pub fn release(state: &UpdateState) -> Option<Release> {
+    state.newer()
+}
+
+/// A check or download runs: the buttons show a spinner and ignore clicks.
 pub fn busy(state: &UpdateState) -> bool {
     state.busy.load(Ordering::Relaxed)
 }
 
-pub fn on_update_click(app: &mut HubApp, _window: &mut Window, cx: &mut Context<HubApp>) {
+/// Progress or result line for the update popup (download, error, cancel, checking).
+pub fn status(state: &UpdateState) -> Option<String> {
+    if let Some(message) = &state.message {
+        return Some(message.clone());
+    }
+    busy(state).then(|| "Checking for updates...".into())
+}
+
+/// "Check again" in the update popup.
+pub fn check(app: &mut HubApp, cx: &mut Context<HubApp>) {
     if !cfg!(windows) {
-        app.state.notice = Some(Notice::Info("Updates via your package manager.".into()));
+        app.update.message = Some("Updates via your package manager.".into());
         cx.notify();
         return;
     }
     if busy(&app.update) {
         return;
     }
-    let now = Instant::now();
-    match app.update.newer() {
-        Some(release) if app.update.confirm_until.is_some_and(|until| now < until) => {
-            app.update.confirm_until = None;
-            app.state.notice = Some(Notice::Info(format!(
-                "Downloading v{}, the installer opens when done...",
-                release.version
-            )));
-            run_busy(
-                app,
-                cx,
-                move || install(&release),
-                |app, result, cx| {
-                    match result {
-                        // The installer closes the app anyway; quitting now avoids its prompt.
-                        Ok(true) => cx.quit(),
-                        Ok(false) => {
-                            app.state.notice = Some(Notice::Info("Update cancelled.".into()));
-                        }
-                        Err(err) => app.state.notice = Some(Notice::Error(err)),
-                    }
-                },
-            );
-        }
-        Some(release) => ask_confirm(app, &release, now),
-        None => run_busy(app, cx, fetch_latest, |app, result, _| match result {
-            Ok(Some(release)) => {
-                ask_confirm(app, &release, Instant::now());
-                *lock(&app.update.newer) = Some(release);
-            }
-            Ok(None) => {
-                let text = format!("ControlAnything is up to date (v{CURRENT}).");
-                app.state.notice = Some(Notice::Info(text));
-            }
-            Err(err) => {
-                app.state.notice = Some(Notice::Error(format!("Update check failed: {err}")));
-            }
-        }),
-    }
+    app.update.message = None;
+    run_busy(app, cx, fetch_latest, |app, result, _| match result {
+        Ok(found) => *lock(&app.update.newer) = found,
+        Err(err) => app.update.message = Some(format!("Check failed: {err}")),
+    });
     cx.notify();
 }
 
-fn ask_confirm(app: &mut HubApp, release: &Release, now: Instant) {
-    app.update.confirm_until = Some(now + CONFIRM_WINDOW);
-    app.state.notice = Some(Notice::Info(format!(
-        "Update to v{} available, install now? Click the update button again to confirm.",
-        release.version
-    )));
+/// "Install" in the update popup: download, verify, run the installer.
+pub fn install_latest(app: &mut HubApp, cx: &mut Context<HubApp>) {
+    let Some(release) = app.update.newer() else {
+        return;
+    };
+    if busy(&app.update) {
+        return;
+    }
+    app.update.message = Some(format!("Downloading v{}...", release.version));
+    run_busy(
+        app,
+        cx,
+        move || install(&release),
+        |app, result, cx| match result {
+            // The installer closes the app anyway; quitting now avoids its prompt.
+            Ok(true) => cx.quit(),
+            Ok(false) => app.update.message = Some("Update cancelled.".into()),
+            Err(err) => app.update.message = Some(err),
+        },
+    );
+    cx.notify();
 }
 
 /// Runs `work` off the UI thread with the button busy, then `done` on the UI thread.
@@ -215,7 +208,20 @@ fn parse_release(json: &str, current: &str) -> Result<Option<Release>, String> {
         url: url.to_owned(),
         size,
         sha256,
+        notes: shorten(value["body"].as_str().unwrap_or_default(), NOTES_MAX),
     }))
+}
+
+/// Release notes longer than this are cut (the popup stays small).
+const NOTES_MAX: usize = 600;
+
+/// First `max` chars of `text` (trimmed), with "..." when cut.
+fn shorten(text: &str, max: usize) -> String {
+    let text = text.trim();
+    match text.char_indices().nth(max) {
+        Some((end, _)) => format!("{}...", text[..end].trim_end()),
+        None => text.to_owned(),
+    }
 }
 
 /// Downloads the installer into a fresh folder, checks it, then starts it.
@@ -418,6 +424,13 @@ mod tests {
              "browser_download_url":"https://github.com/0XLUC4/ControlAnything/releases/download/v1.0/controlanything_1.0.0_x64-setup.exe"}]}"#;
         let release = parse_release(json, "0.3.0").unwrap().unwrap();
         assert_eq!(release.version, "1.0.0");
+    }
+
+    #[test]
+    fn notes_are_shortened() {
+        assert_eq!(shorten("  short  ", 10), "short");
+        assert_eq!(shorten("abcdef", 3), "abc...");
+        assert_eq!(shorten("éééé", 2), "éé...");
     }
 
     #[test]
