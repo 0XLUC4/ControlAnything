@@ -10,7 +10,7 @@ use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIc
 const OPEN: &str = "open";
 const QUIT: &str = "quit";
 const PROFILE_PREFIX: &str = "profile:";
-const FAN_PNG: &[u8] = include_bytes!("../../../assets/icons/fan.png");
+pub const FAN_PNG: &[u8] = include_bytes!("../../../assets/icons/fan.png");
 
 /// Action demandée depuis la zone de notification ou un raccourci global.
 #[derive(Debug, Clone, PartialEq, Eq)]

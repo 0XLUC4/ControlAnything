@@ -266,15 +266,40 @@ pub enum Preset {
 }
 
 impl Preset {
+    /// Mêmes courbes que les profils livrés (`configs/controlanything-profils.toml`).
     pub fn points(self) -> Vec<CurvePoint> {
         let pts: &[(f32, u8)] = match self {
-            Self::Silent => &[(30.0, 20), (50.0, 30), (70.0, 60), (85.0, 100)],
-            Self::Balanced => &[(30.0, 30), (50.0, 45), (70.0, 75), (80.0, 100)],
-            Self::Performance => &[(30.0, 50), (50.0, 70), (65.0, 100)],
+            Self::Silent => &[(45.0, 25), (65.0, 32), (78.0, 48), (88.0, 70), (95.0, 100)],
+            Self::Balanced => &[(40.0, 30), (60.0, 40), (75.0, 60), (85.0, 85), (92.0, 100)],
+            Self::Performance => &[(40.0, 40), (60.0, 55), (75.0, 80), (85.0, 100)],
         };
         pts.iter()
             .map(|&(temp, duty)| CurvePoint { temp, duty })
             .collect()
+    }
+
+    /// Applique la recette complète (courbe + lissage), en gardant la source de température.
+    pub fn apply(self, settings: &mut FanSettings) {
+        let (min_duty, hysteresis, step_up, step_down, response_ms) = match self {
+            Self::Silent => (25, 6.0, 3, 2, 3000),
+            Self::Balanced => (30, 4.0, 5, 3, 2000),
+            Self::Performance => (40, 3.0, 10, 4, 1000),
+        };
+        if let FanMode::Curve { points, .. } = &mut settings.mode {
+            *points = self.points();
+        }
+        settings.min_duty = min_duty;
+        settings.hysteresis = hysteresis;
+        settings.step_up = step_up;
+        settings.step_down = step_down;
+        settings.response_ms = response_ms;
+    }
+
+    /// Vrai si `settings` correspond exactement à ce préréglage.
+    pub fn matches(self, settings: &FanSettings) -> bool {
+        let mut expected = settings.clone();
+        self.apply(&mut expected);
+        expected == *settings
     }
 }
 

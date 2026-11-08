@@ -10,6 +10,7 @@ mod dashboard;
 mod fans;
 mod hotkeys;
 mod icons;
+mod lighting;
 mod prefs;
 mod settings;
 mod state;

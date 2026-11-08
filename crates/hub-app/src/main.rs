@@ -9,6 +9,8 @@ use std::time::Duration;
 use async_channel::{Receiver, Sender};
 use hub_core::ipc::{self, ClientMsg, DaemonMsg};
 
+mod single_instance;
+
 const RETRY_DELAY: Duration = Duration::from_secs(2);
 
 fn main() {
@@ -17,6 +19,12 @@ fn main() {
         // La console PowerShell 5.1 n'interprète pas les couleurs ANSI.
         .with_ansi(!cfg!(windows))
         .init();
+
+    // Gardé jusqu'à la fin de `main` : le relâcher autoriserait une seconde instance.
+    let Some(_instance_lock) = single_instance::acquire() else {
+        tracing::info!("ControlAnything est déjà ouvert : sortie");
+        return;
+    };
 
     let (daemon_tx, daemon_rx) = async_channel::bounded(16);
     let (client_tx, client_rx) = async_channel::unbounded();

@@ -67,7 +67,7 @@ impl HubApp {
         cx.notify();
     }
 
-    fn edit_config(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Config)) {
+    pub fn edit_config(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Config)) {
         if let Some(draft) = self.state.draft.as_mut() {
             edit(draft);
             cx.notify();

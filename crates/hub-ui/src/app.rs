@@ -12,13 +12,13 @@ use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _, StyledExt as _, TitleBar, h_flex, v_flex,
+    ActiveTheme as _, Sizable as _, StyledExt as _, TitleBar, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AnyWindowHandle, AppContext as _, Context, Entity, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div,
-    px,
+    img, px,
 };
 use hub_core::ipc::{ClientMsg, DaemonMsg};
 
@@ -26,15 +26,18 @@ use crate::alerts::{Alerts, notify};
 use crate::dashboard::Dashboard;
 use crate::fans::{FanControls, FansPage};
 use crate::hotkeys::{Hotkeys, profile_for_slot};
+use crate::icons::BRAND_ICON;
+use crate::lighting::{LightingControls, LightingPage};
 use crate::prefs::Prefs;
 use crate::state::{HubState, Notice};
 use crate::tray::{Command, Tray};
-use crate::widgets::{ACCENT_HOVER, GREEN, RED, RADIUS, hex, solid_tag};
+use crate::widgets::{GREEN, RED, RADIUS, solid_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Dashboard,
     Fans,
+    Lighting,
     Settings,
 }
 
@@ -43,6 +46,7 @@ pub enum Page {
 pub struct Controls {
     profile_select: Entity<SelectState<Vec<SharedString>>>,
     pub fans: FanControls,
+    pub lighting: LightingControls,
     pub profile_name: Entity<InputState>,
 }
 
@@ -52,6 +56,7 @@ pub struct HubApp {
     page: Page,
     dashboard: Dashboard,
     pub fans: FansPage,
+    pub lighting: LightingPage,
     /// `None` quand l'application est réduite dans la zone de notification.
     pub controls: Option<Controls>,
     pub window: Option<AnyWindowHandle>,
@@ -120,6 +125,7 @@ impl HubApp {
             page: Page::Dashboard,
             dashboard: Dashboard::default(),
             fans: FansPage::default(),
+            lighting: LightingPage::default(),
             controls: None,
             window: None,
             tray,
@@ -145,12 +151,15 @@ impl HubApp {
         )];
         let (fans, fan_subscriptions) = FanControls::new(window, cx);
         subscriptions.extend(fan_subscriptions);
+        let (lighting, lighting_subscriptions) = LightingControls::new(window, cx);
+        subscriptions.extend(lighting_subscriptions);
         let profile_name =
             cx.new(|cx| InputState::new(window, cx).placeholder("Nom du nouveau profil"));
         self.fans.source_items.clear();
         self.controls = Some(Controls {
             profile_select,
             fans,
+            lighting,
             profile_name,
         });
         self.window_subscriptions = subscriptions;
@@ -287,32 +296,38 @@ impl HubApp {
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let item = |label: &'static str, icon: IconName, page: Page, cx: &mut Context<Self>| {
+            // `min_h` : l'élément impose `h_7` après notre style, trop bas pour la surbrillance.
             SidebarMenuItem::new(label)
                 .icon(icon)
+                .min_h(px(40.))
                 .px_3()
-                .py_2p5()
+                .rounded(px(8.))
                 .active(self.page == page)
                 .on_click(cx.listener(move |app, _, _, cx| {
                     app.page = page;
                     cx.notify();
                 }))
         };
-        Sidebar::new("nav").w(px(220.)).child(
-            SidebarMenu::new()
-                .gap_3()
-                .pt_3()
-                .child(item("Tableau de bord", IconName::LayoutDashboard, Page::Dashboard, cx))
-                .child(item("Ventilateurs", IconName::Fan, Page::Fans, cx))
-                .child(item("Paramètres", IconName::Settings, Page::Settings, cx)),
-        )
-    }
-
-    fn title_bar(&self) -> impl IntoElement {
         let status = if self.state.connected() {
             solid_tag(GREEN).rounded_full().child("Connecté")
         } else {
             solid_tag(RED).rounded_full().child("Daemon déconnecté")
         };
+        Sidebar::new("nav")
+            .w(px(220.))
+            .footer(h_flex().w_full().justify_center().child(status))
+            .child(
+                SidebarMenu::new()
+                    .gap_1()
+                    .pt_3()
+                    .child(item("Tableau de bord", IconName::LayoutDashboard, Page::Dashboard, cx))
+                    .child(item("Ventilateurs", IconName::Fan, Page::Fans, cx))
+                    .child(item("Éclairage", IconName::Lightbulb, Page::Lighting, cx))
+                    .child(item("Paramètres", IconName::Settings, Page::Settings, cx)),
+            )
+    }
+
+    fn title_bar(&self) -> impl IntoElement {
         let profile_select = self
             .controls
             .as_ref()
@@ -329,7 +344,7 @@ impl HubApp {
                         .items_center()
                         .text_sm()
                         .font_semibold()
-                        .child(Icon::new(IconName::Fan).small().text_color(hex(ACCENT_HOVER)))
+                        .child(img(BRAND_ICON).size(px(18.)).rounded_sm())
                         .child("ControlAnything"),
                 )
                 .child(
@@ -355,8 +370,7 @@ impl HubApp {
                                         .w(px(220.)),
                                 ),
                             )
-                        })
-                        .child(status),
+                        }),
                 ),
         )
     }
@@ -437,6 +451,7 @@ impl Render for HubApp {
         let page = match self.page {
             Page::Dashboard => self.dashboard.render(&self.state, self.prefs.temperature_unit, cx),
             Page::Fans => self.render_fans(window, cx),
+            Page::Lighting => self.render_lighting(window, cx),
             Page::Settings => self.render_settings(cx),
         };
         let theme = cx.theme();

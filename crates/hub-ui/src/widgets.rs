@@ -159,7 +159,7 @@ pub fn stepper(
 }
 
 /// Bouton d'un groupe d'options exclusives (mode, page…).
-pub fn choice(id: impl Into<ElementId>, label: &'static str, selected: bool) -> Button {
+pub fn choice(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> Button {
     let button = Button::new(id).small().label(label);
     if selected { button.primary() } else { button.outline() }
 }

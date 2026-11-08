@@ -25,7 +25,7 @@ une UI GPUI s'y connecte en IPC local (named pipe sous Windows, socket Unix sous
   ```sh
   sudo apt install libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libvulkan1 \
     libfontconfig-dev libglib2.0-dev libssl-dev libzstd-dev clang cmake libgtk-3-dev \
-    libayatana-appindicator3-dev libxdo-dev
+    libayatana-appindicator3-dev libxdo-dev libudev-dev
   ```
   Capteurs : voir [packaging/linux/README.md](packaging/linux/README.md) (`sensors-detect`,
   module DKMS `nct6687d` pour les cartes MSI).

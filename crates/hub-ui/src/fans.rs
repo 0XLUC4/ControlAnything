@@ -699,15 +699,18 @@ impl HubApp {
                 .unwrap_or_else(|| evaluate_curve(points, temp));
             (temp, f32::from(duty))
         });
+        // Préréglage = courbe + lissage, identique au profil du même nom.
+        let current = self.selected_settings();
         let presets = [
             ("preset-silent", "Silencieux", Preset::Silent),
             ("preset-balanced", "Équilibré", Preset::Balanced),
             ("preset-perf", "Performance", Preset::Performance),
         ]
         .map(|(id, label, preset)| {
-            choice(id, label, preset.points() == points).on_click(cx.listener(
-                move |app, _, _, cx| app.edit_points(cx, |p| *p = preset.points()),
-            ))
+            let active = current.as_ref().is_some_and(|s| preset.matches(s));
+            choice(id, label, active).on_click(cx.listener(move |app, _, _, cx| {
+                app.edit_fan(cx, |s| preset.apply(s))
+            }))
         });
         let unit = self.prefs.temperature_unit;
         let status = match marker {

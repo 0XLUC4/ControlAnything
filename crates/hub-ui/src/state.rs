@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use hub_core::config::{Config, FanMode, FanSettings, Profile, TempSource};
 use hub_core::fan::{FanChannel, FanStatus};
 use hub_core::ipc::{DaemonMsg, Snapshot};
+use hub_core::rgb::RgbDeviceInfo;
 use hub_core::{Device, Reading, SensorKind};
 
 /// Au-delà, le daemon est considéré comme déconnecté.
@@ -30,6 +31,8 @@ pub struct HubState {
     pub channels: Vec<FanChannel>,
     pub fans: Vec<FanStatus>,
     pub failsafe: bool,
+    /// Appareils RGB détectés par le daemon.
+    pub rgb_devices: Vec<RgbDeviceInfo>,
     pub notice: Option<Notice>,
     /// Un `SetConfig` attend sa réponse : le prochain `State` remplace le brouillon.
     pub pending_apply: bool,
@@ -48,8 +51,7 @@ impl HubState {
                 self.failsafe = failsafe;
             }
             DaemonMsg::State { config, channels } => self.on_state(config, channels),
-            // Page Éclairage : vague suivante.
-            DaemonMsg::Rgb { .. } => {}
+            DaemonMsg::Rgb { devices } => self.rgb_devices = devices,
             DaemonMsg::Error { message } => {
                 self.pending_apply = false;
                 self.notice = Some(Notice::Error(message));
