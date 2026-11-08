@@ -4,8 +4,8 @@
 //! (most controllers cannot leave a single zone to the firmware).
 //! If at least one zone has a software effect, the `Firmware` zones of the same device are turned off.
 //!
-//! Safety: the default `RgbConfig` has neither `sync` nor zones -> everything is `Firmware` -> nothing
-//! is ever written until the user has configured an effect.
+//! Default: a zone with no setting follows `DEFAULT_EFFECT` (the app drives all lighting).
+//! Only an explicit `Firmware` effect (old configs) leaves a device to its firmware.
 
 use hub_core::Reading;
 use hub_core::ipc::{self, DaemonMsg};
@@ -183,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn default_config_is_all_firmware() {
+    fn default_config_has_no_zone_settings() {
         let config = RgbConfig::default();
         assert!(config.sync.is_none() && config.zones.is_empty());
     }

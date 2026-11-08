@@ -55,6 +55,9 @@ pub trait RgbDevice: Send {
     fn restore(&mut self);
 }
 
+/// Effect of a zone with no setting: the app always drives the lighting.
+pub static DEFAULT_EFFECT: Effect = Effect::Rainbow { period_ms: 5000 };
+
 /// Effect applied to a zone (or to everything, in sync mode).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "effect", rename_all = "snake_case")]
@@ -81,7 +84,7 @@ pub struct RgbConfig {
     pub brightness: u8,
     /// `Some` = same effect everywhere (global sync).
     pub sync: Option<Effect>,
-    /// Per-zone effect, key `"{device_id}/{zone_id}"`; missing = `Firmware`.
+    /// Per-zone effect, key `"{device_id}/{zone_id}"`; missing = [`DEFAULT_EFFECT`].
     pub zones: BTreeMap<String, Effect>,
 }
 

@@ -10,7 +10,7 @@ use gpui_kit::{
 };
 use hub_core::SensorKind;
 use hub_core::config::TempSource;
-use hub_core::rgb::{Effect, Rgb, RgbConfig};
+use hub_core::rgb::{DEFAULT_EFFECT, Effect, Rgb, RgbConfig};
 
 use crate::app::HubApp;
 use crate::fans::waiting;
@@ -18,8 +18,7 @@ use crate::state::temp_sources;
 use crate::widgets::{choice, field, hex, muted, section, stepper};
 
 /// Effect labels, in the index order of [`default_effect`].
-const EFFECTS: [&str; 8] = [
-    "Firmware default",
+const EFFECTS: [&str; 7] = [
     "Off",
     "Static",
     "Breathing",
@@ -92,18 +91,18 @@ fn zone_key(device: &str, zone: &str) -> String {
 /// Default effect of each [`EFFECTS`] entry.
 fn default_effect(index: usize) -> Effect {
     match index {
-        1 => Effect::Off,
-        2 => Effect::Static { color: BLUE },
-        3 => Effect::Breathing {
+        0 => Effect::Off,
+        1 => Effect::Static { color: BLUE },
+        2 => Effect::Breathing {
             color: BLUE,
             period_ms: 3000,
         },
-        4 => Effect::Rainbow { period_ms: 5000 },
-        5 => Effect::Wave {
+        3 => Effect::Rainbow { period_ms: 5000 },
+        4 => Effect::Wave {
             colors: vec![BLUE, PURPLE],
             period_ms: 4000,
         },
-        6 => Effect::Temperature {
+        5 => Effect::Temperature {
             source: TempSource::Sensor {
                 id: "cpu/package_temp".into(),
             },
@@ -112,25 +111,25 @@ fn default_effect(index: usize) -> Effect {
             min_temp: 40.0,
             max_temp: 80.0,
         },
-        7 => Effect::Load {
+        6 => Effect::Load {
             sensor: "cpu/load".into(),
             low: GREEN,
             high: RED,
         },
-        _ => Effect::Firmware,
+        _ => DEFAULT_EFFECT.clone(),
     }
 }
 
 fn effect_index(effect: &Effect) -> usize {
     match effect {
-        Effect::Firmware => 0,
-        Effect::Off => 1,
-        Effect::Static { .. } => 2,
-        Effect::Breathing { .. } => 3,
-        Effect::Rainbow { .. } => 4,
-        Effect::Wave { .. } => 5,
-        Effect::Temperature { .. } => 6,
-        Effect::Load { .. } => 7,
+        Effect::Off => 0,
+        Effect::Static { .. } => 1,
+        Effect::Breathing { .. } => 2,
+        // Old configs: firmware is shown as the default effect.
+        Effect::Rainbow { .. } | Effect::Firmware => 3,
+        Effect::Wave { .. } => 4,
+        Effect::Temperature { .. } => 5,
+        Effect::Load { .. } => 6,
     }
 }
 
@@ -205,24 +204,25 @@ fn step_temp(effect: &mut Effect, max_bound: bool, up: bool) {
     }
 }
 
-/// Edited effect: the sync effect if any, otherwise the zone one (missing = firmware).
+/// Edited effect: the sync effect if any, otherwise the zone one (missing or firmware = default).
 fn current_effect(rgb: &RgbConfig, zone: Option<&str>) -> Option<Effect> {
-    match &rgb.sync {
-        Some(effect) => Some(effect.clone()),
-        None => Some(rgb.zones.get(zone?).cloned().unwrap_or(Effect::Firmware)),
-    }
+    let effect = match &rgb.sync {
+        Some(effect) => effect.clone(),
+        None => rgb.zones.get(zone?).cloned().unwrap_or_else(|| DEFAULT_EFFECT.clone()),
+    };
+    Some(if effect == Effect::Firmware { DEFAULT_EFFECT.clone() } else { effect })
 }
 
-/// Edits the current effect; a zone back to firmware is removed (missing = firmware).
+/// Edits the current effect (a missing zone starts from the default effect).
 fn edit_rgb(rgb: &mut RgbConfig, zone: Option<&str>, edit: impl FnOnce(&mut Effect)) {
     if let Some(effect) = rgb.sync.as_mut() {
         edit(effect);
     } else if let Some(zone) = zone {
-        let effect = rgb.zones.entry(zone.to_owned()).or_insert(Effect::Firmware);
-        edit(effect);
+        let effect = rgb.zones.entry(zone.to_owned()).or_insert_with(|| DEFAULT_EFFECT.clone());
         if *effect == Effect::Firmware {
-            rgb.zones.remove(zone);
+            *effect = DEFAULT_EFFECT.clone();
         }
+        edit(effect);
     }
 }
 
@@ -316,7 +316,7 @@ impl HubApp {
                 Switch::new("rgb-sync")
                     .checked(rgb.sync.is_some())
                     .on_click(cx.listener(|app, checked: &bool, _, cx| {
-                        let sync = checked.then_some(Effect::Firmware);
+                        let sync = checked.then(|| DEFAULT_EFFECT.clone());
                         app.edit_config(cx, |c| c.rgb.sync = sync);
                     })),
                 cx,
@@ -380,12 +380,6 @@ impl HubApp {
                 .gap_2()
                 .children(kinds.collect::<Vec<_>>()),
         );
-        if *effect == Effect::Firmware {
-            editor = editor.child(muted(
-                "The service writes nothing: the original lighting is kept.",
-                cx,
-            ));
-        }
         for (slot, (label, _)) in colors(effect).into_iter().enumerate() {
             editor = editor.child(field(
                 label,
@@ -518,37 +512,38 @@ mod tests {
     }
 
     #[test]
-    fn zone_edits_drop_firmware_entries() {
+    fn zone_edits_start_from_default_effect() {
         let mut rgb = RgbConfig::default();
         let zone = Some("mystic-light/1462:7e06/jrgb1");
-        assert_eq!(current_effect(&rgb, zone), Some(Effect::Firmware));
+        assert_eq!(current_effect(&rgb, zone), Some(DEFAULT_EFFECT.clone()));
         assert_eq!(current_effect(&rgb, None), None);
-        edit_rgb(&mut rgb, zone, |e| *e = default_effect(2));
+        edit_rgb(&mut rgb, zone, |e| *e = default_effect(1));
         assert_eq!(rgb.zones.len(), 1);
         edit_rgb(&mut rgb, zone, |e| set_color(e, 0, RED));
         assert_eq!(
             current_effect(&rgb, zone),
             Some(Effect::Static { color: RED })
         );
-        edit_rgb(&mut rgb, zone, |e| *e = Effect::Firmware);
-        assert!(rgb.zones.is_empty());
+        // Old config: an explicit firmware zone is shown and edited as the default effect.
+        rgb.zones.insert("d/old".into(), Effect::Firmware);
+        assert_eq!(current_effect(&rgb, Some("d/old")), Some(DEFAULT_EFFECT.clone()));
         // Sync mode: only `sync` is changed.
         rgb.sync = Some(Effect::Off);
-        edit_rgb(&mut rgb, zone, |e| *e = default_effect(4));
+        edit_rgb(&mut rgb, zone, |e| *e = default_effect(3));
         assert_eq!(rgb.sync, Some(Effect::Rainbow { period_ms: 5000 }));
-        assert!(rgb.zones.is_empty());
+        assert_eq!(rgb.zones.len(), 2);
     }
 
     #[test]
     fn colors_slots_and_steps() {
-        let mut wave = default_effect(5);
+        let mut wave = default_effect(4);
         set_color(&mut wave, 1, GREEN);
         set_color(&mut wave, 2, RED);
         assert_eq!(
             colors(&wave),
             vec![("Color 1", BLUE), ("Color 2", GREEN)]
         );
-        let mut temp = default_effect(6);
+        let mut temp = default_effect(5);
         set_color(&mut temp, 1, GREEN);
         for _ in 0..20 {
             step_temp(&mut temp, false, true);
@@ -563,7 +558,7 @@ mod tests {
             panic!("temperature expected");
         };
         assert_eq!((hot, min_temp, max_temp), (GREEN, 75.0, 80.0));
-        let mut rainbow = default_effect(4);
+        let mut rainbow = default_effect(3);
         for _ in 0..20 {
             step_period(&mut rainbow, false);
         }

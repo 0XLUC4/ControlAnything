@@ -6,16 +6,14 @@ use std::time::Duration;
 
 use hub_core::Reading;
 use hub_core::control::resolve_source;
-use hub_core::rgb::{Effect, Rgb, RgbConfig};
+use hub_core::rgb::{DEFAULT_EFFECT, Effect, Rgb, RgbConfig};
 
-static FIRMWARE: Effect = Effect::Firmware;
-
-/// Effective effect of a zone: `sync` if set, else `zones["{device}/{zone}"]`, else Firmware.
+/// Effective effect of a zone: `sync` if set, else `zones["{device}/{zone}"]`, else [`DEFAULT_EFFECT`].
 pub fn effect_for<'a>(cfg: &'a RgbConfig, device_id: &str, zone_id: &str) -> &'a Effect {
     cfg.sync
         .as_ref()
         .or_else(|| cfg.zones.get(&format!("{device_id}/{zone_id}")))
-        .unwrap_or(&FIRMWARE)
+        .unwrap_or(&DEFAULT_EFFECT)
 }
 
 /// Frame of a zone of `leds` LEDs at time `elapsed` (since engine start).
@@ -282,10 +280,10 @@ mod tests {
     #[test]
     fn effect_for_precedence() {
         let mut cfg = RgbConfig::default();
-        assert_eq!(effect_for(&cfg, "dev", "z1"), &Effect::Firmware);
+        assert_eq!(effect_for(&cfg, "dev", "z1"), &DEFAULT_EFFECT);
         cfg.zones.insert("dev/z1".into(), Effect::Off);
         assert_eq!(effect_for(&cfg, "dev", "z1"), &Effect::Off);
-        assert_eq!(effect_for(&cfg, "dev", "z2"), &Effect::Firmware);
+        assert_eq!(effect_for(&cfg, "dev", "z2"), &DEFAULT_EFFECT);
         cfg.sync = Some(Effect::Static { color: RED });
         assert_eq!(
             effect_for(&cfg, "dev", "z1"),
