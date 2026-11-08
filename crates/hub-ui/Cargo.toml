@@ -1,0 +1,22 @@
+[package]
+name = "hub-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+hub-core.workspace = true
+gpui-kit.workspace = true
+async-channel.workspace = true
+serde.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tray-icon = "0.26"
+global-hotkey = "0.9"
+auto-launch = "0.6"
+notify-rust = "4.18"
+directories = "6"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# tray-icon (backend libappindicator) s'appuie sur GTK 3 : même version que la sienne.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"

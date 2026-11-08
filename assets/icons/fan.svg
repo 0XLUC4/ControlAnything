@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Icône ControlAnything : ventilateur blanc sur fond noir. fan.png (64x64) et controlanything.ico en sont les rendus. -->
+  <rect width="64" height="64" rx="14" fill="#000000"/>
+  <circle cx="32" cy="32" r="25.25" fill="none" stroke="#ffffff" stroke-width="3.5"/>
+  <g fill="#ffffff">
+    <ellipse cx="32" cy="19.5" rx="6.5" ry="11" transform="rotate(0 32 32) rotate(35 32 19.5)"/>
+    <ellipse cx="32" cy="19.5" rx="6.5" ry="11" transform="rotate(90 32 32) rotate(35 32 19.5)"/>
+    <ellipse cx="32" cy="19.5" rx="6.5" ry="11" transform="rotate(180 32 32) rotate(35 32 19.5)"/>
+    <ellipse cx="32" cy="19.5" rx="6.5" ry="11" transform="rotate(270 32 32) rotate(35 32 19.5)"/>
+  </g>
+  <circle cx="32" cy="32" r="5.5" fill="#000000"/>
+  <circle cx="32" cy="32" r="2.5" fill="#ffffff"/>
+</svg>

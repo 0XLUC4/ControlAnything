@@ -1,0 +1,7 @@
+[package]
+name = "hub-backend-linux"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+hub-core.workspace = true

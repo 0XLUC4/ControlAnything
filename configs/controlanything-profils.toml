@@ -1,0 +1,171 @@
+# ControlAnything — profils pour MSI Z790 Gaming Plus WiFi + i9-14900K + AIO + RTX 5080
+# Import : Paramètres → Importer. Remplace toute la config (profils + noms des ventilos).
+#
+# Anti « monte à fond puis redescend » :
+# - le radiateur et la pompe suivent le CPU seul, les ventilos boîtier suivent max(CPU, GPU) ;
+# - hystérésis 4-6 °C : les pics brefs du 14900K sont ignorés ;
+# - temps de réponse 2-3 s + petits pas de montée : rampe douce au lieu de sauts ;
+# - failsafe CPU 98 °C (TjMax 100 °C) : un 14900K dépasse 90 °C en charge normale.
+# En-têtes vides (SYS_FAN2/4/5/6) et ventilos GPU : non listés = Auto (BIOS / pilote NVIDIA, zéro RPM au repos).
+
+poll_interval_ms = 1000
+active_profile = "Silencieux"
+
+[fan_labels]
+"nct6687/pwm1" = "Radiateur AIO (CPU_FAN)"
+"nct6687/pwm2" = "Pompe AIO"
+"nct6687/pwm3" = "Antec (SYS_FAN1)"
+"nct6687/pwm5" = "Antec (SYS_FAN3)"
+
+[failsafe]
+cpu_critical = 98.0
+gpu_critical = 85.0
+
+# ───────────── Silencieux : bureautique, jeu léger ─────────────
+[[profiles]]
+name = "Silencieux"
+
+[profiles.fans."nct6687/pwm1"]
+min_duty = 25
+hysteresis = 6.0
+step_up = 3
+step_down = 2
+response_ms = 3000
+mode = { mode = "curve", source = { type = "sensor", id = "cpu/package_temp" }, points = [
+    { temp = 45.0, duty = 25 },
+    { temp = 65.0, duty = 32 },
+    { temp = 78.0, duty = 48 },
+    { temp = 88.0, duty = 70 },
+    { temp = 95.0, duty = 100 },
+] }
+
+# Pompe : vitesse fixe = bruit constant ; 60 % = plancher de sécurité du daemon (FanControl : 40-50 % au repos).
+[profiles.fans."nct6687/pwm2"]
+mode = { mode = "fixed", duty = 60 }
+
+[profiles.fans."nct6687/pwm3"]
+min_duty = 25
+hysteresis = 5.0
+step_up = 3
+step_down = 2
+response_ms = 3000
+mode = { mode = "curve", source = { type = "max", ids = ["cpu/package_temp", "gpu0/temp"] }, points = [
+    { temp = 45.0, duty = 25 },
+    { temp = 65.0, duty = 30 },
+    { temp = 75.0, duty = 42 },
+    { temp = 85.0, duty = 65 },
+    { temp = 92.0, duty = 100 },
+] }
+
+[profiles.fans."nct6687/pwm5"]
+min_duty = 25
+hysteresis = 5.0
+step_up = 3
+step_down = 2
+response_ms = 3000
+mode = { mode = "curve", source = { type = "max", ids = ["cpu/package_temp", "gpu0/temp"] }, points = [
+    { temp = 45.0, duty = 25 },
+    { temp = 65.0, duty = 30 },
+    { temp = 75.0, duty = 42 },
+    { temp = 85.0, duty = 65 },
+    { temp = 92.0, duty = 100 },
+] }
+
+# ───────────── Équilibré : jeu ─────────────
+[[profiles]]
+name = "Équilibré"
+
+[profiles.fans."nct6687/pwm1"]
+min_duty = 30
+hysteresis = 4.0
+step_up = 5
+step_down = 3
+response_ms = 2000
+mode = { mode = "curve", source = { type = "sensor", id = "cpu/package_temp" }, points = [
+    { temp = 40.0, duty = 30 },
+    { temp = 60.0, duty = 40 },
+    { temp = 75.0, duty = 60 },
+    { temp = 85.0, duty = 85 },
+    { temp = 92.0, duty = 100 },
+] }
+
+[profiles.fans."nct6687/pwm2"]
+mode = { mode = "fixed", duty = 80 }
+
+[profiles.fans."nct6687/pwm3"]
+min_duty = 30
+hysteresis = 4.0
+step_up = 5
+step_down = 3
+response_ms = 2000
+mode = { mode = "curve", source = { type = "max", ids = ["cpu/package_temp", "gpu0/temp"] }, points = [
+    { temp = 40.0, duty = 30 },
+    { temp = 60.0, duty = 38 },
+    { temp = 72.0, duty = 55 },
+    { temp = 82.0, duty = 80 },
+    { temp = 90.0, duty = 100 },
+] }
+
+[profiles.fans."nct6687/pwm5"]
+min_duty = 30
+hysteresis = 4.0
+step_up = 5
+step_down = 3
+response_ms = 2000
+mode = { mode = "curve", source = { type = "max", ids = ["cpu/package_temp", "gpu0/temp"] }, points = [
+    { temp = 40.0, duty = 30 },
+    { temp = 60.0, duty = 38 },
+    { temp = 72.0, duty = 55 },
+    { temp = 82.0, duty = 80 },
+    { temp = 90.0, duty = 100 },
+] }
+
+# ───────────── Performance : rendu, benchmark ─────────────
+[[profiles]]
+name = "Performance"
+
+[profiles.fans."nct6687/pwm1"]
+min_duty = 40
+hysteresis = 3.0
+step_up = 10
+step_down = 4
+response_ms = 1000
+mode = { mode = "curve", source = { type = "sensor", id = "cpu/package_temp" }, points = [
+    { temp = 40.0, duty = 40 },
+    { temp = 60.0, duty = 55 },
+    { temp = 75.0, duty = 80 },
+    { temp = 85.0, duty = 100 },
+] }
+
+[profiles.fans."nct6687/pwm2"]
+mode = { mode = "fixed", duty = 100 }
+
+[profiles.fans."nct6687/pwm3"]
+min_duty = 40
+hysteresis = 3.0
+step_up = 10
+step_down = 4
+response_ms = 1000
+mode = { mode = "curve", source = { type = "max", ids = ["cpu/package_temp", "gpu0/temp"] }, points = [
+    { temp = 40.0, duty = 40 },
+    { temp = 60.0, duty = 55 },
+    { temp = 75.0, duty = 80 },
+    { temp = 85.0, duty = 100 },
+] }
+
+[profiles.fans."nct6687/pwm5"]
+min_duty = 40
+hysteresis = 3.0
+step_up = 10
+step_down = 4
+response_ms = 1000
+mode = { mode = "curve", source = { type = "max", ids = ["cpu/package_temp", "gpu0/temp"] }, points = [
+    { temp = 40.0, duty = 40 },
+    { temp = 60.0, duty = 55 },
+    { temp = 75.0, duty = 80 },
+    { temp = 85.0, duty = 100 },
+] }
+
+# ───────────── Custom : vide = tout en Auto (BIOS), à toi de jouer ─────────────
+[[profiles]]
+name = "Custom"

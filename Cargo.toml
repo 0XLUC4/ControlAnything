@@ -1,0 +1,40 @@
+# Fichier: Cargo.toml
+# Pourquoi: versions centralisées, vérifiées sur crates.io le 2026-11-08
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+
+[workspace.dependencies]
+# UI : gpui-kit (ex gpui-component) réexporte gpui-pre =0.3.11 (snapshot zed@f816e1f).
+# NE PAS ajouter gpui 0.2.2 de crates.io ni zed en git : deux GPUI incompatibles.
+gpui-kit = "=0.9.0"
+
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"] }
+async-channel = "2.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "1.2"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+sysinfo = "0.40"
+nvml-wrapper = "0.13"
+windows = "0.62"
+
+hub-core = { path = "crates/hub-core" }
+hub-backend-windows = { path = "crates/hub-backend-windows" }
+hub-backend-linux = { path = "crates/hub-backend-linux" }
+hub-ui = { path = "crates/hub-ui" }
+hub-rgb = { path = "crates/hub-rgb" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# panic reste "unwind" : avec "abort", les Drop qui remettent les ventilos en auto ne s'exécutent pas

@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+# stop = SIGTERM -> fans handed back to the BIOS
+if [ "$1" = "remove" ] && [ -d /run/systemd/system ]; then
+    systemctl disable --now controlanythingd || true
+fi

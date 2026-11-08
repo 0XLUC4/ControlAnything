@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ControlAnything
+Comment=Capteurs, ventilateurs et RGB du PC
+Exec=controlanything
+Icon=controlanything
+Terminal=false
+Categories=System;Monitor;

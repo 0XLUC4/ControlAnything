@@ -1,0 +1,346 @@
+//! Pilote MSI Mystic Light (USB HID), famille « 185 octets ».
+//!
+//! Faits du protocole (sources : description des structures `FeaturePacket_185`,
+//! `ZoneData`, table des cartes et détection dans OpenRGB
+//! `Controllers/MSIMotherboardController/*`, GPL-2.0 — lus pour les faits, code réécrit) :
+//! - Feature report id 0x52, 185 octets (id inclus). La détection lit ce report avec un
+//!   tampon de 200 octets ; une longueur de 185 (ou 186) identifie la famille 185.
+//! - Zone = 10 octets : effet, R, G, B, vitesse|luminosité, R2, G2, B2, drapeaux couleur,
+//!   bourrage ; les zones JRAINBOW ont un 11e octet (nombre de LEDs / cycle).
+//! - Offsets : JRGB1 = 1, JRAINBOW1 = 31, JRAINBOW2 = 42, ON_BOARD_LED = 74, octet 184 =
+//!   drapeau « sauvegarde en flash » (1 = écrit la flash). On l'envoie TOUJOURS à 0.
+//! - PID 0x7E06 (MS-7E06, Z790) : famille 185, zones JRGB1 + JRAINBOW1 + JRAINBOW2,
+//!   aucune LED embarquée ; sans LEDs embarquées, la zone ON_BOARD_LED doit recopier JRGB.
+//! - Effet 1 = statique ; luminosité 100 % = 10 << 2 ; bit 7 des drapeaux couleur =
+//!   couleur personnalisée.
+//!
+//! Choix de sécurité : seul le report 0x52 (volatil, octet de sauvegarde à 0) est envoyé,
+//! en mode « une couleur par zone ». Le mode par LED (report 0x53) n'est pas utilisé.
+//! shortcut: une couleur par en-tête ARGB, passer au report 0x53 par LED après validation matérielle.
+
+use std::time::{Duration, Instant};
+
+use hidapi::{HidApi, HidDevice};
+use hub_core::HwError;
+use hub_core::rgb::{Rgb, RgbDevice, RgbDeviceInfo, RgbZone};
+
+pub const VID: u16 = 0x1462;
+/// Liste blanche stricte : uniquement les cartes dont la famille 185 est vérifiée.
+pub const ALLOWED_PIDS: &[u16] = &[0x7E06];
+pub const REPORT_ID: u8 = 0x52;
+pub const REPORT_LEN: usize = 185;
+/// Tampon de lecture plus grand que le report (même méthode que la détection de référence).
+pub const READ_BUF_LEN: usize = 200;
+const SAVE_FLAG_OFFSET: usize = 184;
+const ON_BOARD_OFFSET: usize = 74;
+const MODE_STATIC: u8 = 1;
+const BRIGHTNESS_100: u8 = 10 << 2;
+const COLOR_FLAG_CUSTOM: u8 = 0x80;
+const COLOR_FLAG_SYNC_ONBOARD: u8 = 0x01;
+/// Bits de synchro JPIPE1/JPIPE2 de la zone embarquée (inutiles en mode statique).
+const COLOR_FLAG_SYNC_JPIPE: u8 = 0x30;
+const SPEED_FLAG_SYNC_JRGB: u8 = 0x80;
+/// ≤ 30 images/s.
+pub const MIN_FRAME_INTERVAL: Duration = Duration::from_millis(33);
+
+pub type Report = [u8; REPORT_LEN];
+
+/// Zone exposée et son offset dans le report.
+pub struct ZoneSlot {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub offset: usize,
+}
+
+/// Zones de la MS-7E06, dans l'ordre de `info().zones`.
+pub const ZONES: [ZoneSlot; 3] = [
+    ZoneSlot { id: "jrgb1", label: "JRGB", offset: 1 },
+    ZoneSlot { id: "jargb1", label: "JARGB_V2 1", offset: 31 },
+    ZoneSlot { id: "jargb2", label: "JARGB_V2 2", offset: 42 },
+];
+
+pub fn is_allowed(vid: u16, pid: u16) -> bool {
+    vid == VID && ALLOWED_PIDS.contains(&pid)
+}
+
+/// Valide un report lu (`read` = octets renvoyés par `get_feature_report`).
+/// Accepte 185 ou 186 octets (certains pilotes ajoutent un octet), id 0x52.
+pub fn parse_report(read: &[u8]) -> Result<Report, String> {
+    if read.len() != REPORT_LEN && read.len() != REPORT_LEN + 1 {
+        return Err(format!("longueur {} inattendue (attendu {REPORT_LEN})", read.len()));
+    }
+    if read[0] != REPORT_ID {
+        return Err(format!("id de report 0x{:02x} inattendu", read[0]));
+    }
+    let mut report = [0u8; REPORT_LEN];
+    report.copy_from_slice(&read[..REPORT_LEN]);
+    // Jamais de sauvegarde en flash, même en restaurant.
+    report[SAVE_FLAG_OFFSET] = 0;
+    Ok(report)
+}
+
+/// Couleur (effet, R, G, B) d'une zone telle que lue dans le report.
+pub fn zone_state(report: &Report, offset: usize) -> (u8, Rgb) {
+    (report[offset], Rgb::new(report[offset + 1], report[offset + 2], report[offset + 3]))
+}
+
+fn write_static(report: &mut Report, offset: usize, color: Rgb) {
+    report[offset] = MODE_STATIC;
+    report[offset + 1..offset + 4].copy_from_slice(&[color.r, color.g, color.b]);
+    report[offset + 4] = BRIGHTNESS_100;
+    report[offset + 5..offset + 8].copy_from_slice(&[color.r, color.g, color.b]);
+    report[offset + 8] |= COLOR_FLAG_CUSTOM;
+}
+
+/// Construit le report « statique par zone » à partir de l'état d'origine.
+/// Les octets non concernés (nombre de LEDs ARGB, zones absentes) restent ceux d'origine.
+pub fn build_report(original: &Report, colors: &[Rgb; ZONES.len()]) -> Report {
+    let mut report = *original;
+    for (slot, color) in ZONES.iter().zip(colors) {
+        write_static(&mut report, slot.offset, *color);
+    }
+    // Carte sans LED embarquée : la zone embarquée pilote JRGB, on la recopie.
+    let onboard = ON_BOARD_OFFSET;
+    report[onboard] = MODE_STATIC;
+    report.copy_within(2..5, onboard + 1);
+    report.copy_within(6..9, onboard + 5);
+    report[onboard + 4] &= !SPEED_FLAG_SYNC_JRGB;
+    report[onboard + 8] = (report[onboard + 8] | COLOR_FLAG_CUSTOM | COLOR_FLAG_SYNC_ONBOARD)
+        & !COLOR_FLAG_SYNC_JPIPE;
+    report[onboard + 9] = 0;
+    report[SAVE_FLAG_OFFSET] = 0;
+    report
+}
+
+/// Limiteur : au plus une écriture par `MIN_FRAME_INTERVAL`, rien si identique au dernier envoi.
+#[derive(Default)]
+pub struct FrameGate {
+    last_sent: Option<(Instant, Report)>,
+}
+
+impl FrameGate {
+    pub fn should_send(&self, report: &Report, now: Instant) -> bool {
+        match &self.last_sent {
+            None => true,
+            Some((at, last)) => last != report && now.duration_since(*at) >= MIN_FRAME_INTERVAL,
+        }
+    }
+
+    pub fn mark_sent(&mut self, report: Report, now: Instant) {
+        self.last_sent = Some((now, report));
+    }
+
+    pub fn reset(&mut self) {
+        self.last_sent = None;
+    }
+}
+
+/// Convertit `frame[zone][led]` en une couleur par zone (LED 0).
+pub fn frame_colors(frame: &[Vec<Rgb>]) -> Result<[Rgb; ZONES.len()], HwError> {
+    if frame.len() != ZONES.len() {
+        return Err(HwError::Other(format!(
+            "image de {} zones, {} attendues",
+            frame.len(),
+            ZONES.len()
+        )));
+    }
+    let mut colors = [Rgb::BLACK; ZONES.len()];
+    for (index, leds) in frame.iter().enumerate() {
+        // Une seule LED par zone : les LEDs en trop sont ignorées.
+        colors[index] = *leds
+            .first()
+            .ok_or_else(|| HwError::Other(format!("zone {} vide", ZONES[index].id)))?;
+    }
+    Ok(colors)
+}
+
+/// Lit le report courant (lecture seule).
+pub fn read_report(device: &HidDevice) -> Result<Vec<u8>, String> {
+    let mut buf = [0u8; READ_BUF_LEN];
+    buf[0] = REPORT_ID;
+    let len = device.get_feature_report(&mut buf).map_err(|e| e.to_string())?;
+    Ok(buf[..len.min(READ_BUF_LEN)].to_vec())
+}
+
+pub struct MysticLight {
+    info: RgbDeviceInfo,
+    device: HidDevice,
+    original: Report,
+    gate: FrameGate,
+    /// Vrai dès qu'une écriture a eu lieu : `restore` n'écrit que dans ce cas.
+    dirty: bool,
+}
+
+impl MysticLight {
+    fn open(api: &HidApi, path: &std::ffi::CStr, pid: u16) -> Result<Self, String> {
+        let device = api.open_path(path).map_err(|e| e.to_string())?;
+        let original = parse_report(&read_report(&device)?)?;
+        let zones = ZONES
+            .iter()
+            .map(|slot| RgbZone { id: slot.id.into(), label: slot.label.into(), leds: 1 })
+            .collect();
+        let info = RgbDeviceInfo {
+            id: format!("mystic-light/{VID:04x}:{pid:04x}"),
+            label: format!("MSI Mystic Light (MS-{pid:04X})"),
+            zones,
+        };
+        Ok(Self { info, device, original, gate: FrameGate::default(), dirty: false })
+    }
+
+    fn send(&self, report: &Report) -> Result<(), HwError> {
+        self.device
+            .send_feature_report(report)
+            .map_err(|e| HwError::Unavailable(format!("Mystic Light : {e}")))
+    }
+}
+
+impl RgbDevice for MysticLight {
+    fn info(&self) -> &RgbDeviceInfo {
+        &self.info
+    }
+
+    fn set_frame(&mut self, frame: &[Vec<Rgb>]) -> Result<(), HwError> {
+        let report = build_report(&self.original, &frame_colors(frame)?);
+        let now = Instant::now();
+        if !self.gate.should_send(&report, now) {
+            return Ok(());
+        }
+        self.dirty = true;
+        self.send(&report)?;
+        self.gate.mark_sent(report, now);
+        Ok(())
+    }
+
+    fn restore(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        match self.send(&self.original) {
+            Ok(()) => self.dirty = false,
+            Err(e) => tracing::warn!("restauration Mystic Light échouée : {e}"),
+        }
+        self.gate.reset();
+    }
+}
+
+impl Drop for MysticLight {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
+/// Ouvre les contrôleurs autorisés ; aucune écriture.
+pub fn detect() -> Vec<Box<dyn RgbDevice>> {
+    let api = match HidApi::new() {
+        Ok(api) => api,
+        Err(e) => {
+            tracing::warn!("hidapi indisponible : {e}");
+            return Vec::new();
+        }
+    };
+    let mut found: Vec<Box<dyn RgbDevice>> = Vec::new();
+    for info in api.device_list() {
+        if !is_allowed(info.vendor_id(), info.product_id()) {
+            continue;
+        }
+        // Une seule ouverture par PID (Windows peut exposer plusieurs collections).
+        let id = format!("mystic-light/{VID:04x}:{:04x}", info.product_id());
+        if found.iter().any(|device| device.info().id == id) {
+            continue;
+        }
+        match MysticLight::open(&api, info.path(), info.product_id()) {
+            Ok(device) => found.push(Box::new(device)),
+            Err(e) => tracing::warn!(
+                "Mystic Light {:04x} ignoré ({:?}) : {e}",
+                info.product_id(),
+                info.path()
+            ),
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Report synthétique cohérent avec la disposition documentée.
+    fn fixture() -> Vec<u8> {
+        let mut report = vec![0u8; REPORT_LEN];
+        report[0] = REPORT_ID;
+        // JRAINBOW1 : arc-en-ciel (9), 0x28 luminosité, 40 LEDs.
+        report[31] = 9;
+        report[35] = 0x28;
+        report[41] = 40;
+        report[52] = 60; // JRAINBOW2 : 60 LEDs
+        report[ON_BOARD_OFFSET + 4] = 0xA9;
+        report[ON_BOARD_OFFSET + 8] = 0xB1;
+        report[SAVE_FLAG_OFFSET] = 1;
+        report
+    }
+
+    #[test]
+    fn allow_list_only_7e06() {
+        assert!(is_allowed(0x1462, 0x7E06));
+        assert!(!is_allowed(0x1462, 0x7E07));
+        assert!(!is_allowed(0x1463, 0x7E06));
+    }
+
+    #[test]
+    fn parse_validates_and_clears_save_flag() {
+        let report = parse_report(&fixture()).unwrap();
+        assert_eq!(report[SAVE_FLAG_OFFSET], 0);
+        assert_eq!(zone_state(&report, 31).0, 9);
+        let mut longer = fixture();
+        longer.push(0);
+        assert!(parse_report(&longer).is_ok());
+        assert!(parse_report(&fixture()[..162]).is_err());
+        let mut wrong_id = fixture();
+        wrong_id[0] = 0x50;
+        assert!(parse_report(&wrong_id).is_err());
+    }
+
+    #[test]
+    fn build_layout() {
+        let original = parse_report(&fixture()).unwrap();
+        let red = Rgb::new(255, 0, 0);
+        let blue = Rgb::new(0, 0, 255);
+        let report = build_report(&original, &[red, Rgb::new(0, 255, 0), blue]);
+        assert_eq!(&report[1..10], &[1, 255, 0, 0, 0x28, 255, 0, 0, 0x80]);
+        assert_eq!(&report[31..40], &[1, 0, 255, 0, 0x28, 0, 255, 0, 0x80]);
+        assert_eq!(report[41], 40, "nombre de LEDs conservé");
+        assert_eq!(&report[42..46], &[1, 0, 0, 255]);
+        assert_eq!(report[52], 60);
+        // Zone embarquée : miroir de JRGB, synchro JRGB/JPIPE coupée.
+        assert_eq!(&report[74..78], &[1, 255, 0, 0]);
+        assert_eq!(report[78], 0x29);
+        assert_eq!(report[82], 0x81);
+        assert_eq!(report[SAVE_FLAG_OFFSET], 0);
+        assert_eq!(report[0], REPORT_ID);
+        // Octets hors zones intacts.
+        assert_eq!(&report[94..174], &original[94..174]);
+    }
+
+    #[test]
+    fn frame_validation() {
+        let ok = vec![vec![Rgb::WHITE], vec![Rgb::BLACK, Rgb::WHITE], vec![Rgb::WHITE]];
+        assert_eq!(frame_colors(&ok).unwrap()[1], Rgb::BLACK);
+        assert!(frame_colors(&ok[..2]).is_err());
+        assert!(frame_colors(&[vec![Rgb::WHITE], vec![], vec![Rgb::WHITE]]).is_err());
+    }
+
+    #[test]
+    fn gate_rate_limits_and_skips_identical() {
+        let mut gate = FrameGate::default();
+        let start = Instant::now();
+        let a = [1u8; REPORT_LEN];
+        let b = [2u8; REPORT_LEN];
+        assert!(gate.should_send(&a, start));
+        gate.mark_sent(a, start);
+        assert!(!gate.should_send(&b, start + Duration::from_millis(10)));
+        assert!(!gate.should_send(&a, start + Duration::from_secs(1)));
+        assert!(gate.should_send(&b, start + MIN_FRAME_INTERVAL));
+        gate.reset();
+        assert!(gate.should_send(&a, start));
+    }
+}
