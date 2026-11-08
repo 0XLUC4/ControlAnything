@@ -2,10 +2,10 @@
 # Build: packaging\build-windows.ps1  (or: cargo packager --release -c packaging\Packager.toml -f nsis)
 name = "controlanything" # required: without it 0.11.8 fails with os error 267 (runs cargo in the file path)
 product-name = "ControlAnything"
-version = "0.1.0" # keep in sync with [workspace.package] version in Cargo.toml
+version = "0.2.0" # keep in sync with [workspace.package] version in Cargo.toml
 identifier = "eu.controlanything.hub"
 publisher = "ControlAnything"
-description = "Controle du PC : capteurs, ventilateurs, RGB"
+description = "PC control: sensors, fans, RGB"
 out-dir = "../target/packager"
 binaries-dir = "../target/release"
 formats = ["nsis"]

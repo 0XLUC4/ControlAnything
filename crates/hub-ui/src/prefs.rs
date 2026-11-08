@@ -1,15 +1,15 @@
-//! Préférences de l'interface (par utilisateur, hors config du daemon) : `ui.toml`.
+//! Interface preferences (per user, outside the daemon config): `ui.toml`.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Nom du produit (dossier des préférences, entrée de démarrage automatique).
+/// Product name (preferences folder, autostart entry).
 const APP_NAME: &str = "ControlAnything";
-/// Ancien nom : ses préférences et son entrée de démarrage sont reprises.
+/// Former name: its preferences and autostart entry are migrated.
 const LEGACY_APP_NAME: &str = "PC Hub";
 
-/// Unité d'affichage des températures ; les valeurs restent en °C en interne.
+/// Temperature display unit; values stay in °C internally.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TempUnit {
     #[default]
@@ -18,7 +18,7 @@ pub enum TempUnit {
 }
 
 impl TempUnit {
-    /// Température absolue (°C) dans l'unité affichée.
+    /// Absolute temperature (°C) in the displayed unit.
     pub fn convert(self, celsius: f32) -> f32 {
         match self {
             Self::Celsius => celsius,
@@ -26,7 +26,7 @@ impl TempUnit {
         }
     }
 
-    /// Écart de température (hystérésis…) : pas de décalage de 32 °F.
+    /// Temperature difference (hysteresis...): no 32 °F offset.
     pub fn delta(self, celsius: f32) -> f32 {
         match self {
             Self::Celsius => celsius,
@@ -41,12 +41,12 @@ impl TempUnit {
         }
     }
 
-    /// « 51.2 °C » / « 124.2 °F ».
+    /// "51.2 °C" / "124.2 °F".
     pub fn format(self, celsius: f32, decimals: usize) -> String {
         format!("{:.decimals$} {}", self.convert(celsius), self.symbol())
     }
 
-    /// Écart formaté (« 2.0 °C » → « 3.6 °F »).
+    /// Formatted difference ("2.0 °C" → "3.6 °F").
     pub fn format_delta(self, celsius: f32, decimals: usize) -> String {
         format!("{:.decimals$} {}", self.delta(celsius), self.symbol())
     }
@@ -56,7 +56,7 @@ impl TempUnit {
 #[serde(default)]
 pub struct Prefs {
     pub launch_at_startup: bool,
-    /// Lancé avec `--minimized` (démarrage de session) : rester dans la zone de notification.
+    /// Launched with `--minimized` (session startup): stay in the system tray.
     pub start_minimized: bool,
     pub close_to_tray: bool,
     pub temperature_unit: TempUnit,
@@ -76,31 +76,31 @@ impl Default for Prefs {
 }
 
 impl Prefs {
-    /// `…/ControlAnything/config/ui.toml` (Windows : `%APPDATA%\ControlAnything\config\ui.toml`).
+    /// `.../ControlAnything/config/ui.toml` (Windows: `%APPDATA%\ControlAnything\config\ui.toml`).
     fn path() -> Option<PathBuf> {
         prefs_path(APP_NAME)
     }
 
-    /// Charge `ui.toml` ; fichier absent ou invalide → valeurs par défaut.
-    /// Au premier lancement sous le nouveau nom, reprend le `ui.toml` de « PC Hub ».
+    /// Loads `ui.toml`; missing or invalid file → default values.
+    /// On the first launch under the new name, migrates the "PC Hub" `ui.toml`.
     pub fn load() -> Self {
         let Some(path) = Self::path() else {
             tracing::warn!(
-                "dossier de configuration utilisateur introuvable : préférences par défaut"
+                "user config folder not found: default preferences"
             );
             return Self::default();
         };
         if let Some(legacy) = prefs_path(LEGACY_APP_NAME) {
             match migrate_file(&legacy, &path) {
-                Ok(true) => tracing::info!("préférences reprises de {}", legacy.display()),
+                Ok(true) => tracing::info!("preferences migrated from {}", legacy.display()),
                 Ok(false) => {}
-                Err(err) => tracing::warn!("reprise de {} impossible : {err}", legacy.display()),
+                Err(err) => tracing::warn!("cannot migrate {}: {err}", legacy.display()),
             }
         }
         match std::fs::read_to_string(&path) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|err| {
                 tracing::warn!(
-                    "{} invalide ({err}) : préférences par défaut",
+                    "{} invalid ({err}): default preferences",
                     path.display()
                 );
                 Self::default()
@@ -108,7 +108,7 @@ impl Prefs {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Self::default(),
             Err(err) => {
                 tracing::warn!(
-                    "lecture de {} impossible ({err}) : préférences par défaut",
+                    "cannot read {} ({err}): default preferences",
                     path.display()
                 );
                 Self::default()
@@ -117,13 +117,13 @@ impl Prefs {
     }
 
     pub fn save(&self) -> Result<(), String> {
-        let path = Self::path().ok_or("Dossier de configuration utilisateur introuvable.")?;
+        let path = Self::path().ok_or("User config folder not found.")?;
         let text = toml::to_string(self).map_err(|err| err.to_string())?;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
         }
         std::fs::write(&path, text)
-            .map_err(|err| format!("Écriture de {} impossible : {err}", path.display()))
+            .map_err(|err| format!("Cannot write {}: {err}", path.display()))
     }
 }
 
@@ -131,7 +131,7 @@ fn prefs_path(app_name: &str) -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", app_name).map(|d| d.config_dir().join("ui.toml"))
 }
 
-/// Copie `legacy` vers `target` si `target` n'existe pas encore. `true` si la copie a eu lieu.
+/// Copies `legacy` to `target` if `target` does not exist yet. `true` if copied.
 fn migrate_file(legacy: &Path, target: &Path) -> std::io::Result<bool> {
     if target.exists() || !legacy.is_file() {
         return Ok(false);
@@ -143,10 +143,10 @@ fn migrate_file(legacy: &Path, target: &Path) -> std::io::Result<bool> {
     Ok(true)
 }
 
-/// Retire l'entrée de démarrage « PC Hub » ; si elle était active, la recrée sous le nouveau nom.
-/// Renvoie `true` si le démarrage automatique a été réactivé.
+/// Removes the "PC Hub" autostart entry; if it was active, recreates it under the new name.
+/// Returns `true` if autostart was re-enabled.
 pub fn migrate_legacy_autostart() -> bool {
-    // Une build de dev ne doit pas détourner l'entrée de démarrage vers son dossier `target`.
+    // A dev build must not redirect the autostart entry to its `target` folder.
     if cfg!(debug_assertions) {
         return false;
     }
@@ -157,7 +157,7 @@ pub fn migrate_legacy_autostart() -> bool {
         return false;
     }
     if let Err(err) = legacy.disable() {
-        tracing::warn!("ancienne entrée de démarrage « {LEGACY_APP_NAME} » : {err}");
+        tracing::warn!("former autostart entry \"{LEGACY_APP_NAME}\": {err}");
         return false;
     }
     set_autostart(true)
@@ -165,20 +165,20 @@ pub fn migrate_legacy_autostart() -> bool {
         .is_ok()
 }
 
-/// Entrée de démarrage automatique : l'exécutable courant, lancé dans la zone de notification.
+/// Autostart entry: the current executable, launched in the system tray.
 fn auto_launch(app_name: &str) -> Result<auto_launch::AutoLaunch, String> {
     let exe = std::env::current_exe().map_err(|err| err.to_string())?;
     auto_launch::AutoLaunchBuilder::new()
         .set_app_name(app_name)
         .set_app_path(&exe.to_string_lossy())
         .set_args(&["--minimized"])
-        // Clé HKCU : pas besoin des droits administrateur.
+        // HKCU key: no administrator rights needed.
         .set_windows_enable_mode(auto_launch::WindowsEnableMode::CurrentUser)
         .build()
         .map_err(|err| err.to_string())
 }
 
-/// Active ou retire le lancement à l'ouverture de session.
+/// Enables or removes launch at session login.
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
     let launcher = auto_launch(APP_NAME)?;
     let result = if enabled {
@@ -186,7 +186,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     } else {
         launcher.disable()
     };
-    result.map_err(|err| format!("Démarrage automatique : {err}"))
+    result.map_err(|err| format!("Autostart: {err}"))
 }
 
 #[cfg(test)]
@@ -218,15 +218,15 @@ mod tests {
         };
         let text = toml::to_string(&custom).unwrap_or_default();
         assert_eq!(toml::from_str::<Prefs>(&text).ok(), Some(custom));
-        // Clés absentes : valeurs par défaut.
+        // Missing keys: default values.
         let partial: Prefs = toml::from_str("close_to_tray = false").unwrap_or_default();
         assert!(!partial.close_to_tray && partial.start_minimized);
     }
 
     #[test]
     fn autostart_entry_uses_minimized_flag() {
-        // Construire l'entrée ne touche pas au registre.
-        let launcher = auto_launch(APP_NAME).expect("entrée de démarrage");
+        // Building the entry does not touch the registry.
+        let launcher = auto_launch(APP_NAME).expect("autostart entry");
         assert_eq!(launcher.get_app_name(), "ControlAnything");
         assert_eq!(launcher.get_args(), ["--minimized"]);
     }
@@ -237,16 +237,16 @@ mod tests {
         let legacy = dir.join("legacy").join("ui.toml");
         let target = dir.join("new").join("config").join("ui.toml");
         let _ = std::fs::remove_dir_all(&dir);
-        // Pas d'ancien fichier : rien à faire.
+        // No former file: nothing to do.
         assert!(!migrate_file(&legacy, &target).expect("migration"));
-        std::fs::create_dir_all(legacy.parent().expect("parent")).expect("dossier");
-        std::fs::write(&legacy, "hotkeys = false").expect("écriture");
+        std::fs::create_dir_all(legacy.parent().expect("parent")).expect("folder");
+        std::fs::write(&legacy, "hotkeys = false").expect("write");
         assert!(migrate_file(&legacy, &target).expect("migration"));
-        assert_eq!(std::fs::read_to_string(&target).expect("lecture"), "hotkeys = false");
-        // Le nouveau fichier existe : jamais écrasé.
-        std::fs::write(&legacy, "hotkeys = true").expect("écriture");
+        assert_eq!(std::fs::read_to_string(&target).expect("read"), "hotkeys = false");
+        // The new file exists: never overwritten.
+        std::fs::write(&legacy, "hotkeys = true").expect("write");
         assert!(!migrate_file(&legacy, &target).expect("migration"));
-        assert_eq!(std::fs::read_to_string(&target).expect("lecture"), "hotkeys = false");
+        assert_eq!(std::fs::read_to_string(&target).expect("read"), "hotkeys = false");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

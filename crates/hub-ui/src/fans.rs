@@ -1,4 +1,4 @@
-//! Page « Ventilateurs » : liste des canaux et éditeur des réglages du canal sélectionné.
+//! "Fans" page: channel list and settings editor for the selected channel.
 
 use std::time::{Duration, Instant};
 
@@ -32,12 +32,12 @@ use crate::widgets::{
     ACCENT_HOVER, RADIUS, card, choice, duty_bar, field, hex, muted, section, stepper,
 };
 
-/// Durée pendant laquelle « Confirmer la réinitialisation » reste proposé.
+/// How long "Confirm reset" stays offered.
 const RESET_CONFIRM: Duration = Duration::from_secs(4);
-/// Consigne plancher imposée aux pompes par le service.
+/// Minimum duty enforced on pumps by the service.
 const PUMP_MIN_DUTY: u8 = 60;
 
-/// Élément du sélecteur de source : libellé affiché + source de température.
+/// Source selector item: displayed label + temperature source.
 #[derive(Clone, PartialEq)]
 pub struct SourceItem {
     title: SharedString,
@@ -56,18 +56,18 @@ impl SearchableListItem for SourceItem {
     }
 }
 
-/// État de la page indépendant de la fenêtre.
+/// Page state independent of the window.
 #[derive(Default)]
 pub struct FansPage {
     pub selected: Option<String>,
-    /// Éléments actuellement chargés dans `FanControls::source_select`.
+    /// Items currently loaded in `FanControls::source_select`.
     pub source_items: Vec<SourceItem>,
     pub curve: CurveEditor,
-    /// Liste « Non connectés » dépliée.
+    /// "Not connected" list expanded.
     pub show_unconnected: bool,
 }
 
-/// Contrôles à état de la page (liés à la fenêtre) ; leur valeur est recopiée depuis le brouillon à chaque rendu.
+/// Stateful page controls (tied to the window); their value is copied from the draft on each render.
 #[derive(Clone)]
 pub struct FanControls {
     name_input: Entity<InputState>,
@@ -82,7 +82,7 @@ fn percent_slider(cx: &mut Context<HubApp>) -> Entity<SliderState> {
 
 impl FanControls {
     pub fn new(window: &mut Window, cx: &mut Context<HubApp>) -> (Self, Vec<Subscription>) {
-        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Nom du ventilateur"));
+        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Fan name"));
         let fixed_slider = percent_slider(cx);
         let min_slider = percent_slider(cx);
         let source_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
@@ -137,7 +137,7 @@ impl FanControls {
 }
 
 impl HubApp {
-    /// Modifie les réglages du canal sélectionné dans le brouillon.
+    /// Edits the selected channel settings in the draft.
     fn edit_fan(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut FanSettings)) {
         let (Some(channel), Some(draft)) = (self.fans.selected.as_deref(), self.state.draft.as_mut())
         else {
@@ -152,7 +152,7 @@ impl HubApp {
         }
     }
 
-    /// Remet le canal sélectionné en Auto (BIOS) dans le brouillon.
+    /// Puts the selected channel back to Auto (BIOS) in the draft.
     fn reset_selected_fan(&mut self, cx: &mut Context<Self>) {
         let (Some(channel), Some(draft)) = (self.fans.selected.as_deref(), self.state.draft.as_mut())
         else {
@@ -164,9 +164,9 @@ impl HubApp {
         }
     }
 
-    /// « Réinitialiser le profil » : premier clic → confirmation demandée quelques secondes,
-    /// second clic → tous les canaux du profil actif repassent en Auto (dans le brouillon,
-    /// à valider par « Appliquer » comme toute modification).
+    /// "Reset profile": first click → confirmation asked for a few seconds,
+    /// second click → every channel of the active profile goes back to Auto (in the draft,
+    /// to be confirmed with "Apply" like any change).
     pub fn reset_profile_button(&self, id: &'static str, cx: &mut Context<Self>) -> Button {
         let confirming = self
             .confirm_reset_until
@@ -179,9 +179,9 @@ impl HubApp {
             .is_none_or(|p| p.fans.is_empty());
         let button = Button::new(id).small().icon(IconName::RotateCcw);
         let button = if confirming {
-            button.danger().label("Confirmer la réinitialisation")
+            button.danger().label("Confirm reset")
         } else {
-            button.outline().label("Réinitialiser le profil")
+            button.outline().label("Reset profile")
         };
         button
             .disabled(empty && !confirming)
@@ -219,7 +219,7 @@ impl HubApp {
         }
     }
 
-    /// Change de mode en partant de valeurs utiles (consigne actuelle, préréglage Équilibré).
+    /// Switches mode starting from useful values (current duty, Balanced preset).
     fn set_mode(&mut self, mode: &'static str, cx: &mut Context<Self>) {
         let applied = self
             .fans
@@ -317,7 +317,7 @@ impl HubApp {
         }
     }
 
-    /// Recopie le brouillon dans les contrôles à état (sans effet s'ils sont déjà à jour).
+    /// Copies the draft into the stateful controls (no effect if already up to date).
     fn sync_fan_controls(
         &mut self,
         controls: &FanControls,
@@ -380,7 +380,7 @@ impl HubApp {
         if self.state.channels.is_empty() {
             return div()
                 .text_color(cx.theme().muted_foreground)
-                .child("Aucun ventilateur pilotable détecté (lancez le daemon en administrateur).")
+                .child("No controllable fan detected (run the daemon as administrator).")
                 .into_any_element();
         }
         let selected = self
@@ -406,7 +406,7 @@ impl HubApp {
                         h_flex()
                             .gap_2()
                             .text_sm()
-                            .child(div().text_color(cx.theme().muted_foreground).child("Profil actif"))
+                            .child(div().text_color(cx.theme().muted_foreground).child("Active profile"))
                             .child(div().font_semibold().child(profile)),
                     )
                     .child(self.reset_profile_button("reset-profile-fans", cx)),
@@ -426,7 +426,7 @@ impl HubApp {
 
     fn channel_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let mut list = section("Canaux", cx).w(px(300.)).flex_none();
+        let mut list = section("Channels", cx).w(px(300.)).flex_none();
         if !self
             .state
             .channels
@@ -440,10 +440,10 @@ impl HubApp {
                     .text_xs()
                     .bg(theme.warning.opacity(0.15))
                     .text_color(theme.warning)
-                    .child("Ventilateurs carte mère non détectés : lancez controlanythingd en administrateur avec PawnIO installé"),
+                    .child("Motherboard fans not detected: run controlanythingd as administrator with PawnIO installed"),
             );
         }
-        // Un en-tête à 0 RPM laissé en Auto n'a probablement rien de branché : replié.
+        // A header at 0 RPM left in Auto probably has nothing plugged in: collapsed.
         let (connected, unconnected): (Vec<_>, Vec<_>) = self
             .state
             .channels
@@ -496,7 +496,7 @@ impl HubApp {
                         })
                         .xsmall(),
                     )
-                    .child(format!("NON CONNECTÉS ({})", unconnected.len())),
+                    .child(format!("NOT CONNECTED ({})", unconnected.len())),
             );
             if open {
                 for (i, channel) in &unconnected {
@@ -507,13 +507,13 @@ impl HubApp {
         list
     }
 
-    /// Ligne d'un canal : nom, vitesse, barre de consigne, mode (cliquable : sélection).
+    /// Channel row: name, speed, duty bar, mode (clickable: selection).
     fn fan_row(&self, i: usize, channel: &FanChannel, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let applied = self.state.applied_duty(&channel.id);
         let mode = match self.state.draft.as_ref().map(|d| settings_for(d, &channel.id).mode) {
-            Some(FanMode::Fixed { duty }) => format!("Fixe · {duty} %"),
-            Some(FanMode::Curve { .. }) => "Courbe".into(),
+            Some(FanMode::Fixed { duty }) => format!("Fixed, {duty} %"),
+            Some(FanMode::Curve { .. }) => "Curve".into(),
             _ => "Auto (BIOS)".into(),
         };
         let duty = match applied {
@@ -521,7 +521,7 @@ impl HubApp {
             _ => String::new(),
         };
         let rpm = channel_rpm(channel, self.state.readings())
-            .map_or("— RPM".into(), |rpm| format!("{rpm:.0} RPM"));
+            .map_or("- RPM".into(), |rpm| format!("{rpm:.0} RPM"));
         let active = self.fans.selected.as_deref() == Some(channel.id.as_str());
         let id = channel.id.clone();
         v_flex()
@@ -594,11 +594,11 @@ impl HubApp {
                     .on_click(cx.listener(|app, _, _, cx| app.set_mode("auto", cx))),
             )
             .child(
-                choice("mode-fixed", "Fixe", matches!(mode, FanMode::Fixed { .. }))
+                choice("mode-fixed", "Fixed", matches!(mode, FanMode::Fixed { .. }))
                     .on_click(cx.listener(|app, _, _, cx| app.set_mode("fixed", cx))),
             )
             .child(
-                choice("mode-curve", "Courbe", matches!(mode, FanMode::Curve { .. }))
+                choice("mode-curve", "Curve", matches!(mode, FanMode::Curve { .. }))
                     .on_click(cx.listener(|app, _, _, cx| app.set_mode("curve", cx))),
             );
 
@@ -633,20 +633,20 @@ impl HubApp {
                     .small()
                     .outline()
                     .icon(IconName::RotateCcw)
-                    .label("Réinitialiser ce ventilo")
+                    .label("Reset this fan")
                     .disabled(!customized)
                     .on_click(cx.listener(|app, _, _, cx| app.reset_selected_fan(cx))),
             );
         let general = card(cx)
             .child(header)
             .child(field(
-                "Nom",
+                "Name",
                 div().w(px(260.)).child(Input::new(&controls.name_input).small()),
                 cx,
             ))
             .child(field("Mode", modes, cx))
             .when(matches!(mode, FanMode::Auto), |s| {
-                s.child(muted("Le BIOS / firmware pilote ce ventilateur.", cx))
+                s.child(muted("The BIOS / firmware controls this fan.", cx))
             })
             .when_some(
                 match mode {
@@ -655,7 +655,7 @@ impl HubApp {
                 },
                 |s, duty| {
                     s.child(field(
-                        format!("Vitesse fixe : {duty} %"),
+                        format!("Fixed speed: {duty} %"),
                         div().w(px(260.)).child(Slider::new(&controls.fixed_slider)),
                         cx,
                     ))
@@ -690,7 +690,7 @@ impl HubApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let current_temp = resolve_source(source, self.state.readings());
-        // Repère : consigne réellement appliquée, sinon valeur de la courbe.
+        // Marker: duty actually applied, otherwise the curve value.
         let marker = current_temp.map(|temp| {
             let duty = self
                 .state
@@ -699,11 +699,11 @@ impl HubApp {
                 .unwrap_or_else(|| evaluate_curve(points, temp));
             (temp, f32::from(duty))
         });
-        // Préréglage = courbe + lissage, identique au profil du même nom.
+        // Preset = curve + smoothing, same as the profile with the same name.
         let current = self.selected_settings();
         let presets = [
-            ("preset-silent", "Silencieux", Preset::Silent),
-            ("preset-balanced", "Équilibré", Preset::Balanced),
+            ("preset-silent", "Silent", Preset::Silent),
+            ("preset-balanced", "Balanced", Preset::Balanced),
             ("preset-perf", "Performance", Preset::Performance),
         ]
         .map(|(id, label, preset)| {
@@ -714,8 +714,8 @@ impl HubApp {
         });
         let unit = self.prefs.temperature_unit;
         let status = match marker {
-            Some((temp, duty)) => format!("Actuellement {} → {duty:.0} %", unit.format(temp, 1)),
-            None => "Température de la source indisponible".into(),
+            Some((temp, duty)) => format!("Currently {} → {duty:.0} %", unit.format(temp, 1)),
+            None => "Source temperature unavailable".into(),
         };
         let handlers = CurveHandlers {
             down: Self::curve_down,
@@ -724,17 +724,17 @@ impl HubApp {
             up: Self::curve_up,
             up_out: Self::curve_up,
         };
-        section("Courbe", cx)
+        section("Curve", cx)
             .child(field(
                 "Source",
                 Select::new(&controls.source_select)
                     .id("curve-source")
                     .small()
-                    .placeholder("Choisir un capteur")
+                    .placeholder("Choose a sensor")
                     .w(px(260.)),
                 cx,
             ))
-            .child(field("Préréglages", h_flex().gap_2().children(presets), cx))
+            .child(field("Presets", h_flex().gap_2().children(presets), cx))
             .child(self.fans.curve.render(points, marker, handlers, unit, cx))
             .child(
                 h_flex()
@@ -754,14 +754,14 @@ impl HubApp {
     ) -> AnyElement {
         let zero_rpm = settings.zero_rpm_below.filter(|_| !pump);
         let unit = self.prefs.temperature_unit;
-        section("Avancé", cx)
+        section("Advanced", cx)
             .child(field(
-                format!("Vitesse minimale : {} %", settings.min_duty),
+                format!("Minimum speed: {} %", settings.min_duty),
                 div().w(px(260.)).child(Slider::new(&controls.min_slider)),
                 cx,
             ))
             .child(field(
-                "Arrêt complet à basse température (0 RPM)",
+                "Full stop at low temperature (0 RPM)",
                 Switch::new("zero-rpm")
                     .checked(zero_rpm.is_some())
                     .disabled(pump)
@@ -773,13 +773,13 @@ impl HubApp {
             ))
             .when(pump, |s| {
                 s.child(muted(
-                    format!("Une pompe ne doit jamais s'arrêter : le service lui impose au moins {PUMP_MIN_DUTY} %."),
+                    format!("A pump must never stop: the service enforces at least {PUMP_MIN_DUTY} %."),
                     cx,
                 ))
             })
             .when_some(zero_rpm, |s, below| {
                 s.child(field(
-                    "Arrêt sous",
+                    "Stop below",
                     stepper(
                         "zero-rpm-temp",
                         unit.format(below, 0),
@@ -794,7 +794,7 @@ impl HubApp {
                 ))
             })
             .child(field(
-                "Hystérésis",
+                "Hysteresis",
                 stepper(
                     "hysteresis",
                     unit.format_delta(settings.hysteresis, 1),
@@ -808,7 +808,7 @@ impl HubApp {
                 cx,
             ))
             .child(field(
-                "Pas à la hausse (par tick)",
+                "Step up (per tick)",
                 stepper(
                     "step-up",
                     format!("{} %", settings.step_up),
@@ -822,7 +822,7 @@ impl HubApp {
                 cx,
             ))
             .child(field(
-                "Pas à la baisse (par tick)",
+                "Step down (per tick)",
                 stepper(
                     "step-down",
                     format!("{} %", settings.step_down),
@@ -836,7 +836,7 @@ impl HubApp {
                 cx,
             ))
             .child(field(
-                "Temps de réponse",
+                "Response time",
                 stepper(
                     "response",
                     format!("{} ms", settings.response_ms),
@@ -853,15 +853,15 @@ impl HubApp {
     }
 }
 
-/// Affiché tant que le daemon n'a pas envoyé sa configuration.
+/// Shown until the daemon has sent its configuration.
 pub fn waiting(cx: &Context<HubApp>) -> AnyElement {
     div()
         .text_color(cx.theme().muted_foreground)
-        .child("En attente de la configuration du daemon…")
+        .child("Waiting for the daemon configuration...")
         .into_any_element()
 }
 
-/// Pastille des canaux de pompe (consigne plancher imposée par le service).
+/// Pump channel badge (minimum duty enforced by the service).
 fn pump_badge(cx: &Context<HubApp>) -> impl IntoElement {
     let color = cx.theme().info;
     div()
@@ -871,5 +871,5 @@ fn pump_badge(cx: &Context<HubApp>) -> impl IntoElement {
         .text_xs()
         .bg(color.opacity(0.15))
         .text_color(color)
-        .child(format!("Pompe · min {PUMP_MIN_DUTY} %"))
+        .child(format!("Pump, min {PUMP_MIN_DUTY} %"))
 }

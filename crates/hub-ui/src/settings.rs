@@ -1,5 +1,5 @@
-//! Page « Paramètres » : profils (création, renommage, suppression, import/export),
-//! réglages globaux du daemon et préférences de l'application.
+//! "Settings" page: profiles (create, rename, delete, import/export),
+//! global daemon settings and application preferences.
 
 use std::path::PathBuf;
 
@@ -24,7 +24,7 @@ use crate::state::{Notice, delete_profile, duplicate_active, rename_active};
 use crate::widgets::{GREEN, choice, field, section, solid_tag, stepper};
 
 impl HubApp {
-    /// Modifie les préférences, applique leurs effets (démarrage auto, raccourcis) puis les enregistre.
+    /// Edits the preferences, applies their effects (autostart, hotkeys) then saves them.
     fn edit_prefs(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Prefs)) {
         let mut prefs = self.prefs.clone();
         edit(&mut prefs);
@@ -41,13 +41,13 @@ impl HubApp {
             hotkeys.set_enabled(prefs.hotkeys);
         }
         if let Err(message) = prefs.save() {
-            self.notify_error(format!("Préférences non enregistrées : {message}"), cx);
+            self.notify_error(format!("Preferences not saved: {message}"), cx);
         }
         self.prefs = prefs;
         cx.notify();
     }
 
-    /// Applique une opération de profil au brouillon ; l'erreur s'affiche dans le bandeau.
+    /// Applies a profile operation to the draft; the error is shown in the banner.
     fn edit_profiles(
         &mut self,
         cx: &mut Context<Self>,
@@ -74,7 +74,7 @@ impl HubApp {
         }
     }
 
-    /// Exporte la config du daemon (profils compris) dans un fichier TOML choisi par l'utilisateur.
+    /// Exports the daemon config (profiles included) to a TOML file chosen by the user.
     fn export_config(&mut self, cx: &mut Context<Self>) {
         let Some(config) = self.state.config.clone() else {
             return;
@@ -88,11 +88,11 @@ impl HubApp {
         cx.spawn(async move |this, cx| {
             let notice = match chosen.await {
                 Ok(Ok(Some(path))) => Some(match std::fs::write(&path, text) {
-                    Ok(()) => Notice::Info(format!("Configuration exportée : {}", path.display())),
-                    Err(err) => Notice::Error(format!("Export impossible : {err}")),
+                    Ok(()) => Notice::Info(format!("Configuration exported: {}", path.display())),
+                    Err(err) => Notice::Error(format!("Export failed: {err}")),
                 }),
-                Ok(Err(err)) => Some(Notice::Error(format!("Boîte de dialogue indisponible : {err}"))),
-                // Annulé par l'utilisateur.
+                Ok(Err(err)) => Some(Notice::Error(format!("Dialog unavailable: {err}"))),
+                // Cancelled by the user.
                 Ok(Ok(None)) | Err(_) => None,
             };
             let _ = this.update(cx, |app, cx| {
@@ -105,20 +105,20 @@ impl HubApp {
         .detach();
     }
 
-    /// Importe un fichier TOML et l'envoie au daemon (qui le revalide).
+    /// Imports a TOML file and sends it to the daemon (which validates it again).
     fn import_config(&mut self, cx: &mut Context<Self>) {
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Importer".into()),
+            prompt: Some("Import".into()),
         });
         cx.spawn(async move |this, cx| {
             let path = match chosen.await {
                 Ok(Ok(Some(paths))) => paths.into_iter().next(),
                 Ok(Err(err)) => {
                     let _ = this.update(cx, |app, cx| {
-                        app.notify_error(format!("Boîte de dialogue indisponible : {err}"), cx);
+                        app.notify_error(format!("Dialog unavailable: {err}"), cx);
                     });
                     None
                 }
@@ -128,7 +128,7 @@ impl HubApp {
                 return;
             };
             let parsed = std::fs::read_to_string(&path)
-                .map_err(|err| format!("Lecture impossible : {err}"))
+                .map_err(|err| format!("Cannot read file: {err}"))
                 .and_then(|text| Config::from_toml(&text).map_err(|err| err.to_string()))
                 .and_then(|mut config| {
                     config.validate().map_err(|err| err.to_string())?;
@@ -138,7 +138,7 @@ impl HubApp {
                 Ok(config) => {
                     app.state.pending_apply = true;
                     app.state.notice =
-                        Some(Notice::Info(format!("Configuration importée : {}", path.display())));
+                        Some(Notice::Info(format!("Configuration imported: {}", path.display())));
                     app.send(ClientMsg::SetConfig { config });
                     cx.notify();
                 }
@@ -170,11 +170,11 @@ impl HubApp {
         let rows = draft.profiles.iter().enumerate().map(|(i, profile)| {
             let name = profile.name.clone();
             let is_active = draft.active_profile == profile.name;
-            // Seul un profil connu du daemon peut être activé directement.
+            // Only a profile known to the daemon can be activated directly.
             let known = config.profiles.iter().any(|p| p.name == profile.name);
             let activate = name.clone();
             let delete = name.clone();
-            // Raccourci selon l'ordre des profils connus du daemon.
+            // Hotkey based on the order of the profiles known to the daemon.
             let shortcut = config
                 .profiles
                 .iter()
@@ -190,7 +190,7 @@ impl HubApp {
                     h_flex()
                         .gap_2()
                         .child(div().text_sm().font_semibold().child(name))
-                        .when(is_active, |row| row.child(solid_tag(GREEN).small().child("actif")))
+                        .when(is_active, |row| row.child(solid_tag(GREEN).small().child("active")))
                         .when_some(shortcut, |row, keys| {
                             row.child(
                                 div()
@@ -213,7 +213,7 @@ impl HubApp {
                                     .small()
                                     .outline()
                                     .icon(IconName::Play)
-                                    .label("Activer")
+                                    .label("Activate")
                                     .on_click(cx.listener(move |app, _, _, _| {
                                         app.send(ClientMsg::SetProfile {
                                             name: activate.clone(),
@@ -226,7 +226,7 @@ impl HubApp {
                                 .small()
                                 .danger()
                                 .icon(IconName::Trash)
-                                .label("Supprimer")
+                                .label("Delete")
                                 .on_click(cx.listener(move |app, _, _, cx| {
                                     let target = delete.clone();
                                     app.edit_profiles(cx, |c, _| delete_profile(c, &target));
@@ -235,7 +235,7 @@ impl HubApp {
                 )
         });
 
-        let profiles = section("Profils", cx)
+        let profiles = section("Profiles", cx)
             .children(rows)
             .child(
                 h_flex()
@@ -251,7 +251,7 @@ impl HubApp {
                             .small()
                             .outline()
                             .icon(IconName::Plus)
-                            .label("Dupliquer le profil actif")
+                            .label("Duplicate active profile")
                             .on_click(cx.listener(|app, _, _, cx| {
                                 app.edit_profiles(cx, duplicate_active);
                             })),
@@ -261,7 +261,7 @@ impl HubApp {
                             .small()
                             .outline()
                             .icon(IconName::Pencil)
-                            .label("Renommer le profil actif")
+                            .label("Rename active profile")
                             .on_click(cx.listener(|app, _, _, cx| {
                                 app.edit_profiles(cx, rename_active);
                             })),
@@ -275,7 +275,7 @@ impl HubApp {
                         div()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child("Tous les ventilateurs du profil actif repassent en Auto (BIOS)."),
+                            .child("Every fan of the active profile goes back to Auto (BIOS)."),
                     ),
             )
             .child(
@@ -286,7 +286,7 @@ impl HubApp {
                             .small()
                             .outline()
                             .icon(IconName::Download)
-                            .label("Exporter (.toml)…")
+                            .label("Export (.toml)...")
                             .on_click(cx.listener(|app, _, _, cx| app.export_config(cx))),
                     )
                     .child(
@@ -294,18 +294,18 @@ impl HubApp {
                             .small()
                             .outline()
                             .icon(IconName::FolderOpen)
-                            .label("Importer (.toml)…")
+                            .label("Import (.toml)...")
                             .on_click(cx.listener(|app, _, _, cx| app.import_config(cx))),
                     ),
             );
 
         let failsafe = &draft.failsafe;
-        let safety = section("Sécurité (failsafe)", cx)
+        let safety = section("Safety (failsafe)", cx)
             .child(div().text_sm().text_color(theme.muted_foreground).child(
-                "Au-delà de ces seuils, tous les ventilateurs pilotés passent à 100 %.",
+                "Above these thresholds, all controlled fans go to 100 %.",
             ))
             .child(field(
-                "Seuil critique CPU",
+                "CPU critical threshold",
                 stepper(
                     "cpu-critical",
                     unit.format(failsafe.cpu_critical, 0),
@@ -323,7 +323,7 @@ impl HubApp {
                 cx,
             ))
             .child(field(
-                "Seuil critique GPU",
+                "GPU critical threshold",
                 stepper(
                     "gpu-critical",
                     unit.format(failsafe.gpu_critical, 0),
@@ -341,8 +341,8 @@ impl HubApp {
                 cx,
             ));
 
-        let polling = section("Acquisition", cx).child(field(
-            "Intervalle de mesure",
+        let polling = section("Sampling", cx).child(field(
+            "Polling interval",
             stepper(
                 "poll",
                 format!("{} ms", draft.poll_interval_ms),
@@ -370,7 +370,7 @@ impl HubApp {
             .into_any_element()
     }
 
-    /// Préférences de l'application (fichier `ui.toml`, indépendant du daemon).
+    /// Application preferences (`ui.toml` file, independent of the daemon).
     fn app_section(&self, cx: &mut Context<Self>) -> AnyElement {
         let prefs = &self.prefs;
         let theme = cx.theme().clone();
@@ -398,23 +398,23 @@ impl HubApp {
                 )),
             );
         let hotkeys_label: SharedString = if self.hotkeys.is_some() {
-            "Raccourcis globaux Ctrl+Shift+F1…F4 (profils 1 à 4)".into()
+            "Global hotkeys Ctrl+Shift+F1...F4 (profiles 1 to 4)".into()
         } else {
-            "Raccourcis globaux (indisponibles sur ce système)".into()
+            "Global hotkeys (unavailable on this system)".into()
         };
         section("Application", cx)
             .child(field(
-                "Lancer ControlAnything à l'ouverture de session",
+                "Launch ControlAnything at login",
                 toggle("launch-at-startup", prefs.launch_at_startup, |p, v| p.launch_at_startup = v, cx),
                 cx,
             ))
             .child(field(
-                "Au démarrage de session, rester dans la zone de notification",
+                "At login, stay in the system tray",
                 toggle("start-minimized", prefs.start_minimized, |p, v| p.start_minimized = v, cx),
                 cx,
             ))
             .child(field(
-                "Fermer la fenêtre réduit dans la zone de notification",
+                "Closing the window minimizes to the system tray",
                 toggle("close-to-tray", prefs.close_to_tray, |p, v| p.close_to_tray = v, cx),
                 cx,
             ))
@@ -423,9 +423,9 @@ impl HubApp {
                 toggle("hotkeys", prefs.hotkeys, |p, v| p.hotkeys = v, cx),
                 cx,
             ))
-            .child(field("Unité de température", units, cx))
+            .child(field("Temperature unit", units, cx))
             .child(div().text_sm().text_color(theme.muted_foreground).child(
-                "Quitter ControlAnything ne coupe pas la régulation : le service controlanythingd continue de piloter les ventilateurs.",
+                "Quitting ControlAnything does not stop fan control: the controlanythingd service keeps driving the fans.",
             ))
             .into_any_element()
     }

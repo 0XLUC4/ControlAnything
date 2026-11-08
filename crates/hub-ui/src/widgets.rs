@@ -1,6 +1,6 @@
-//! Petits blocs de mise en page communs aux pages, et réglages du thème.
+//! Small layout blocks shared by pages, and theme settings.
 //!
-//! Échelle d'espacement : 4 / 8 / 12 / 16 / 24 px (`gap_1`, `gap_2`, `gap_3`, `gap_4`, `gap_6`).
+//! Spacing scale: 4 / 8 / 12 / 16 / 24 px (`gap_1`, `gap_2`, `gap_3`, `gap_4`, `gap_6`).
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -13,31 +13,31 @@ use gpui_kit::{
     SharedString, Styled as _, Window, div, px, rgb,
 };
 
-/// Pastille pleine à texte blanc : `Tag::success()`/`danger()` (texte coloré sur fond coloré) sont peu lisibles.
+/// Solid badge with white text: `Tag::success()`/`danger()` (colored text on colored background) are hard to read.
 pub fn solid_tag(color: u32) -> Tag {
     let fill = rgb(color).into();
     Tag::custom(fill, gpui_kit::white(), fill)
 }
 
-/// Vert et rouge des pastilles d'état.
+/// Green and red of the status badges.
 pub const GREEN: u32 = 0x16a34a;
 pub const RED: u32 = 0xdc2626;
-/// Couleur d'accent unique (boutons principaux, interrupteurs, barres de consigne).
+/// Single accent color (primary buttons, switches, duty bars).
 pub const ACCENT: u32 = 0x2563eb;
 pub const ACCENT_HOVER: u32 = 0x3b82f6;
 const ACCENT_ACTIVE: u32 = 0x1d4ed8;
-/// Fond des cartes : un cran au-dessus du fond de fenêtre.
+/// Card background: one step above the window background.
 const CARD_BG: u32 = 0x141414;
-/// Rayon commun des cartes.
+/// Shared card radius.
 pub const RADIUS: f32 = 10.0;
 
 pub fn hex(color: u32) -> Hsla {
     rgb(color).into()
 }
 
-/// Thème sombre de gpui-kit + accent bleu.
-/// Le texte du bouton « fermer » de la barre de titre au survol est `danger_foreground`
-/// (rouge sur rouge dans le thème sombre par défaut) : on le passe en blanc.
+/// gpui-kit dark theme + blue accent.
+/// The title bar "close" button text on hover is `danger_foreground`
+/// (red on red in the default dark theme): make it white.
 pub fn apply_theme(cx: &mut App) {
     Theme::update(cx, |theme| {
         let white = gpui_kit::white();
@@ -46,7 +46,7 @@ pub fn apply_theme(cx: &mut App) {
         theme.primary_hover = hex(ACCENT_HOVER);
         theme.primary_active = hex(ACCENT_ACTIVE);
         theme.primary_foreground = white;
-        // Les boutons ont leurs propres couleurs, déduites de `primary` au chargement du thème.
+        // Buttons have their own colors, derived from `primary` when the theme loads.
         theme.button_primary = hex(ACCENT);
         theme.button_primary_hover = hex(ACCENT_HOVER);
         theme.button_primary_active = hex(ACCENT_ACTIVE);
@@ -57,7 +57,7 @@ pub fn apply_theme(cx: &mut App) {
     });
 }
 
-/// Cadre de carte : fond légèrement relevé, bordure discrète.
+/// Card frame: slightly raised background, subtle border.
 pub fn card(cx: &App) -> Div {
     v_flex()
         .gap_3()
@@ -68,7 +68,7 @@ pub fn card(cx: &App) -> Div {
         .bg(hex(CARD_BG))
 }
 
-/// En-tête de carte : icône + titre.
+/// Card header: icon + title.
 pub fn card_header(icon: IconName, title: impl Into<SharedString>, cx: &App) -> Div {
     let theme = cx.theme();
     h_flex()
@@ -81,12 +81,12 @@ pub fn card_header(icon: IconName, title: impl Into<SharedString>, cx: &App) -> 
         .child(title.into())
 }
 
-/// Carte titrée (sans icône), pour les pages de réglages.
+/// Titled card (no icon), for settings pages.
 pub fn section(title: impl Into<SharedString>, cx: &App) -> Div {
     card(cx).child(div().text_sm().font_semibold().child(title.into()))
 }
 
-/// Ligne « libellé à gauche, contrôle à droite ».
+/// "Label on the left, control on the right" row.
 pub fn field(label: impl Into<SharedString>, control: impl IntoElement, cx: &App) -> Div {
     h_flex()
         .justify_between()
@@ -101,7 +101,7 @@ pub fn field(label: impl Into<SharedString>, control: impl IntoElement, cx: &App
         .child(control)
 }
 
-/// Grande valeur suivie de son unité, plus discrète.
+/// Large value followed by its more subtle unit.
 pub fn big_value(value: impl Into<SharedString>, unit: &str, color: Hsla, cx: &App) -> Div {
     h_flex()
         .items_baseline()
@@ -115,7 +115,7 @@ pub fn big_value(value: impl Into<SharedString>, unit: &str, color: Hsla, cx: &A
         )
 }
 
-/// Barre horizontale de consigne (0–100 %) ; vide si la consigne est inconnue (BIOS).
+/// Horizontal duty bar (0-100 %); empty if the duty is unknown (BIOS).
 pub fn duty_bar(duty: Option<u8>, cx: &App) -> Div {
     let fill = f32::from(duty.unwrap_or(0).min(100)) / 100.0;
     div()
@@ -126,7 +126,7 @@ pub fn duty_bar(duty: Option<u8>, cx: &App) -> Div {
         .child(div().h_full().w(gpui_kit::relative(fill)).rounded_full().bg(hex(ACCENT)))
 }
 
-/// Texte secondaire.
+/// Secondary text.
 pub fn muted(text: impl Into<SharedString>, cx: &App) -> Div {
     div()
         .text_sm()
@@ -136,7 +136,7 @@ pub fn muted(text: impl Into<SharedString>, cx: &App) -> Div {
 
 type Handler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
-/// Valeur numérique réglable par « − » / « + ».
+/// Numeric value adjustable with "-" / "+".
 pub fn stepper(
     id: &str,
     value: String,
@@ -158,7 +158,7 @@ pub fn stepper(
         .into_any_element()
 }
 
-/// Bouton d'un groupe d'options exclusives (mode, page…).
+/// Button of an exclusive option group (mode, page...).
 pub fn choice(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool) -> Button {
     let button = Button::new(id).small().label(label);
     if selected { button.primary() } else { button.outline() }

@@ -1,4 +1,4 @@
-//! Charge CPU et mémoire via sysinfo (multi-plateforme, sans droits).
+//! CPU load and memory via sysinfo (cross-platform, no privileges).
 
 use super::bytes_to_mib;
 use hub_core::{Device, HwError, Reading, SensorKind, SensorProvider};
@@ -11,7 +11,7 @@ pub struct SysinfoProvider {
 impl SysinfoProvider {
     pub fn new() -> Result<Self, HwError> {
         let system =
-            System::new().map_err(|err| HwError::Unavailable(format!("sysinfo : {err}")))?;
+            System::new().map_err(|err| HwError::Unavailable(format!("sysinfo: {err}")))?;
         Ok(Self { system })
     }
 }
@@ -32,7 +32,7 @@ impl SensorProvider for SysinfoProvider {
     }
 
     fn poll(&mut self, out: &mut Vec<Reading>) -> Result<(), HwError> {
-        // La charge CPU est un delta entre deux refresh : le 1er poll renvoie 0 %.
+        // CPU load is a delta between two refreshes: the first poll returns 0%.
         self.system.refresh_cpu_usage();
         self.system.refresh_memory();
         let used = self.system.used_memory();

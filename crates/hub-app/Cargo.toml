@@ -17,6 +17,6 @@ tracing-subscriber.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
 
-# Icône de l'exécutable (ressource Windows n° 1, reprise aussi par GPUI pour la fenêtre).
+# Executable icon (Windows resource #1, also used by GPUI for the window).
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

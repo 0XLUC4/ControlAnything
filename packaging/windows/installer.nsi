@@ -480,14 +480,14 @@ Section PawnIOCheck
   Pop $1
   ${If} $0 != 0
     IfSilent pawnio_done
-    MessageBox MB_YESNO|MB_ICONQUESTION "Le pilote PawnIO (https://pawnio.eu) est requis pour lire les capteurs et piloter les ventilateurs.$\r$\n$\r$\nL'installer maintenant avec winget (namazso.PawnIO) ?$\r$\nNon : continuer sans, a installer ensuite depuis https://pawnio.eu" IDNO pawnio_open
+    MessageBox MB_YESNO|MB_ICONQUESTION "The PawnIO driver (https://pawnio.eu) is required to read sensors and control fans.$\r$\n$\r$\nInstall it now with winget (namazso.PawnIO)?$\r$\nNo: continue without it and install it later from https://pawnio.eu" IDNO pawnio_open
     DetailPrint "winget install namazso.PawnIO"
     nsExec::ExecToLog 'winget install --id namazso.PawnIO -e --accept-package-agreements --accept-source-agreements'
     Pop $0
     ${If} $0 == 0
       Goto pawnio_done
     ${EndIf}
-    MessageBox MB_OK|MB_ICONEXCLAMATION "winget a echoue ($0). Installez PawnIO depuis https://pawnio.eu puis redemarrez le service ControlAnything."
+    MessageBox MB_OK|MB_ICONEXCLAMATION "winget failed ($0). Install PawnIO from https://pawnio.eu, then restart the ControlAnything service."
     pawnio_open:
     ExecShell "open" "https://pawnio.eu"
   ${EndIf}
@@ -584,7 +584,7 @@ Section Install
   nsExec::ExecToLog '"$INSTDIR\controlanythingd.exe" install'
   Pop $0
   ${If} $0 != 0
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Le service ControlAnything n'a pas pu etre installe ($0).$\r$\nConsole admin : $\"$INSTDIR\controlanythingd.exe$\" install" /SD IDOK
+    MessageBox MB_OK|MB_ICONEXCLAMATION "The ControlAnything service could not be installed ($0).$\r$\nFrom an admin console: $\"$INSTDIR\controlanythingd.exe$\" install" /SD IDOK
   ${EndIf}
 
   ; Auto close this page for passive mode

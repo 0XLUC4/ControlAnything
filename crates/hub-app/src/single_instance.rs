@@ -1,26 +1,26 @@
-//! Instance unique de l'UI : une seconde instance doit quitter aussitôt.
-//! En cas d'erreur système, on laisse démarrer : mieux vaut une UI de trop qu'aucune UI.
+//! Single UI instance: a second instance must exit immediately.
+//! On a system error, startup proceeds: one UI too many beats no UI at all.
 
-/// Verrou à garder vivant toute la durée du programme ; `None` si une autre instance tourne.
+/// Lock to keep alive for the whole program; `None` if another instance is running.
 #[cfg(windows)]
 pub fn acquire() -> Option<windows::Win32::Foundation::HANDLE> {
     use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
     use windows::Win32::System::Threading::CreateMutexW;
     use windows::core::w;
 
-    // SAFETY : nom constant terminé par un nul, attributs de sécurité par défaut.
+    // SAFETY: constant nul-terminated name, default security attributes.
     match unsafe { CreateMutexW(None, false, w!("Local\\ControlAnything.UI")) } {
-        // SAFETY : lu juste après CreateMutexW, sans appel système intermédiaire.
-        // Le handle n'est jamais fermé : Windows le libère à la fin du processus.
+        // SAFETY: read right after CreateMutexW, with no system call in between.
+        // The handle is never closed: Windows releases it when the process exits.
         Ok(handle) => (unsafe { GetLastError() } != ERROR_ALREADY_EXISTS).then_some(handle),
         Err(err) => {
-            tracing::warn!("mutex d'instance unique indisponible : {err}");
+            tracing::warn!("single-instance mutex unavailable: {err}");
             Some(HANDLE::default())
         }
     }
 }
 
-/// Verrou à garder vivant toute la durée du programme ; `None` si une autre instance tourne.
+/// Lock to keep alive for the whole program; `None` if another instance is running.
 #[cfg(unix)]
 pub fn acquire() -> Option<Option<std::fs::File>> {
     let dir =
@@ -28,13 +28,13 @@ pub fn acquire() -> Option<Option<std::fs::File>> {
     match lock_file(&dir.join("controlanything-ui.lock")) {
         Ok(lock) => lock.map(Some),
         Err(err) => {
-            tracing::warn!("verrou d'instance unique indisponible : {err}");
+            tracing::warn!("single-instance lock unavailable: {err}");
             Some(None)
         }
     }
 }
 
-/// Verrou exclusif non bloquant ; `Ok(None)` si le fichier est déjà verrouillé.
+/// Non-blocking exclusive lock; `Ok(None)` if the file is already locked.
 #[cfg(any(unix, test))]
 fn lock_file(path: &std::path::Path) -> std::io::Result<Option<std::fs::File>> {
     let file = std::fs::OpenOptions::new()

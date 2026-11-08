@@ -1,5 +1,5 @@
-//! Backend Windows via le pilote PawnIO : température CPU Intel (module IntelMSR)
-//! et Super I/O Nuvoton NCT6687D (module LpcIO).
+//! Windows backend via the PawnIO driver: Intel CPU temperature (IntelMSR module)
+//! and Nuvoton NCT6687D Super I/O (LpcIO module).
 #![cfg(windows)]
 
 use std::path::Path;
@@ -15,24 +15,24 @@ use pawnio::PawnIo;
 const MSR_TEMPERATURE_TARGET: u64 = 0x1A2;
 const MSR_PACKAGE_THERM_STATUS: u64 = 0x1B1;
 
-/// Température package d'un CPU Intel, lue par MSR via PawnIO.
+/// Package temperature of an Intel CPU, read from MSR via PawnIO.
 pub struct IntelCpuTemp {
     pawn: PawnIo,
     tj_max: u64,
 }
 
 impl IntelCpuTemp {
-    /// Ouvre `\\?\GLOBALROOT\Device\PawnIO` et charge le module signé IntelMSR depuis `module_path`.
+    /// Opens `\\?\GLOBALROOT\Device\PawnIO` and loads the signed IntelMSR module from `module_path`.
     pub fn open(module_path: &Path) -> Result<Self, HwError> {
         if !is_genuine_intel() {
-            return Err(HwError::Unavailable("CPU non Intel".into()));
+            return Err(HwError::Unavailable("non-Intel CPU".into()));
         }
         let mut sensor = Self { pawn: PawnIo::open(module_path)?, tj_max: 0 };
         sensor.tj_max = (sensor.read_msr(MSR_TEMPERATURE_TARGET)? >> 16) & 0xFF;
         Ok(sensor)
     }
 
-    /// Appelle `ioctl_read_msr` du module : entrée = n° MSR, sortie = valeur.
+    /// Calls the module's `ioctl_read_msr`: input = MSR number, output = value.
     fn read_msr(&self, msr: u64) -> Result<u64, HwError> {
         let mut value = [0u64];
         self.pawn.execute("ioctl_read_msr", &[msr], &mut value)?;
@@ -58,7 +58,7 @@ impl SensorProvider for IntelCpuTemp {
     }
 }
 
-/// Température = TjMax - offset numérique (bits 22:16 de IA32_PACKAGE_THERM_STATUS).
+/// Temperature = TjMax - digital offset (bits 22:16 of IA32_PACKAGE_THERM_STATUS).
 fn package_temp(tj_max: u64, therm_status: u64) -> f32 {
     tj_max.saturating_sub((therm_status >> 16) & 0x7F) as f32
 }
@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn package_temp_from_raw_msr() {
-        // TjMax 100 °C, offset 0x23 = 35 → 65 °C ; bits hors champ ignorés.
+        // TjMax 100 C, offset 0x23 = 35 -> 65 C; bits outside the field are ignored.
         assert_eq!(package_temp(100, 0x8823_0000 | 0xFFFF), 65.0);
         assert_eq!(package_temp(100, 0x7F << 16), 0.0);
     }

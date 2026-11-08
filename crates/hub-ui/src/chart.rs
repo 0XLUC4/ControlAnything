@@ -1,4 +1,4 @@
-//! Graphe temps réel des températures CPU et GPU (AreaChart de gpui-kit).
+//! Real-time CPU and GPU temperature chart (gpui-kit AreaChart).
 
 use std::collections::VecDeque;
 
@@ -13,15 +13,15 @@ use crate::prefs::TempUnit;
 const CPU_COLOR: u32 = 0x38bdf8;
 const GPU_COLOR: u32 = 0xa78bfa;
 
-/// Un instant du graphe ; les deux valeurs sont alignées sur le point le plus récent.
+/// One instant of the chart; both values are aligned on the most recent point.
 struct Point {
     label: SharedString,
     cpu: f32,
     gpu: f32,
 }
 
-/// Valeur au rang `i` d'une série alignée à droite sur `len` points ;
-/// avant son premier point, la série reprend sa première valeur.
+/// Value at index `i` of a series right-aligned on `len` points;
+/// before its first point, the series repeats its first value.
 fn value_at(series: &VecDeque<f32>, len: usize, i: usize) -> f32 {
     let offset = len.saturating_sub(series.len());
     series.get(i.saturating_sub(offset)).copied().unwrap_or(0.0)
@@ -45,7 +45,7 @@ pub fn temp_chart(
             .items_center()
             .justify_center()
             .text_color(theme.muted_foreground)
-            .child("En attente de données…")
+            .child("Waiting for data...")
             .into_any_element()
     } else {
         let points = (0..len).map(|i| Point {
@@ -60,7 +60,7 @@ pub fn temp_chart(
             .y_tick_format(move |v| unit.format(v as f32, 0))
             .x_tick_count(5)
             .appear(false);
-        // Un capteur absent (ex. température CPU sans droits admin) n'a pas de courbe.
+        // A missing sensor (e.g. CPU temperature without admin rights) has no curve.
         if !cpu_series.is_empty() {
             chart = chart
                 .y(|p: &Point| p.cpu)
@@ -88,7 +88,7 @@ pub fn temp_chart(
                 .child(
                     div()
                         .text_color(theme.muted_foreground)
-                        .child("Températures (2 min)"),
+                        .child("Temperatures (2 min)"),
                 )
                 .child(div().text_color(color(CPU_COLOR)).child("● CPU"))
                 .child(div().text_color(color(GPU_COLOR)).child("● GPU")),

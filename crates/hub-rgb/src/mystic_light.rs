@@ -1,22 +1,22 @@
-//! Pilote MSI Mystic Light (USB HID), famille « 185 octets ».
+//! MSI Mystic Light driver (USB HID), "185-byte" family.
 //!
-//! Faits du protocole (sources : description des structures `FeaturePacket_185`,
-//! `ZoneData`, table des cartes et détection dans OpenRGB
-//! `Controllers/MSIMotherboardController/*`, GPL-2.0 — lus pour les faits, code réécrit) :
-//! - Feature report id 0x52, 185 octets (id inclus). La détection lit ce report avec un
-//!   tampon de 200 octets ; une longueur de 185 (ou 186) identifie la famille 185.
-//! - Zone = 10 octets : effet, R, G, B, vitesse|luminosité, R2, G2, B2, drapeaux couleur,
-//!   bourrage ; les zones JRAINBOW ont un 11e octet (nombre de LEDs / cycle).
-//! - Offsets : JRGB1 = 1, JRAINBOW1 = 31, JRAINBOW2 = 42, ON_BOARD_LED = 74, octet 184 =
-//!   drapeau « sauvegarde en flash » (1 = écrit la flash). On l'envoie TOUJOURS à 0.
-//! - PID 0x7E06 (MS-7E06, Z790) : famille 185, zones JRGB1 + JRAINBOW1 + JRAINBOW2,
-//!   aucune LED embarquée ; sans LEDs embarquées, la zone ON_BOARD_LED doit recopier JRGB.
-//! - Effet 1 = statique ; luminosité 100 % = 10 << 2 ; bit 7 des drapeaux couleur =
-//!   couleur personnalisée.
+//! Protocol facts (sources: description of the `FeaturePacket_185` and `ZoneData`
+//! structures, board table and detection in OpenRGB
+//! `Controllers/MSIMotherboardController/*`, GPL-2.0, read for the facts, code rewritten):
+//! - Feature report id 0x52, 185 bytes (id included). Detection reads this report with a
+//!   200-byte buffer; a length of 185 (or 186) identifies the 185 family.
+//! - Zone = 10 bytes: effect, R, G, B, speed|brightness, R2, G2, B2, color flags,
+//!   padding; JRAINBOW zones have an 11th byte (LED count / cycle).
+//! - Offsets: JRGB1 = 1, JRAINBOW1 = 31, JRAINBOW2 = 42, ON_BOARD_LED = 74, byte 184 =
+//!   "save to flash" flag (1 = writes flash). We ALWAYS send it as 0.
+//! - PID 0x7E06 (MS-7E06, Z790): 185 family, zones JRGB1 + JRAINBOW1 + JRAINBOW2,
+//!   no onboard LED; without onboard LEDs, the ON_BOARD_LED zone must mirror JRGB.
+//! - Effect 1 = static; brightness 100 % = 10 << 2; bit 7 of the color flags =
+//!   custom color.
 //!
-//! Choix de sécurité : seul le report 0x52 (volatil, octet de sauvegarde à 0) est envoyé,
-//! en mode « une couleur par zone ». Le mode par LED (report 0x53) n'est pas utilisé.
-//! shortcut: une couleur par en-tête ARGB, passer au report 0x53 par LED après validation matérielle.
+//! Safety choice: only report 0x52 (volatile, save byte at 0) is sent, in
+//! "one color per zone" mode. Per-LED mode (report 0x53) is not used.
+//! shortcut: one color per ARGB header, move to per-LED report 0x53 after hardware validation.
 
 use std::time::{Duration, Instant};
 
@@ -25,11 +25,11 @@ use hub_core::HwError;
 use hub_core::rgb::{Rgb, RgbDevice, RgbDeviceInfo, RgbZone};
 
 pub const VID: u16 = 0x1462;
-/// Liste blanche stricte : uniquement les cartes dont la famille 185 est vérifiée.
+/// Strict allow-list: only boards whose 185 family is verified.
 pub const ALLOWED_PIDS: &[u16] = &[0x7E06];
 pub const REPORT_ID: u8 = 0x52;
 pub const REPORT_LEN: usize = 185;
-/// Tampon de lecture plus grand que le report (même méthode que la détection de référence).
+/// Read buffer larger than the report (same method as the reference detection).
 pub const READ_BUF_LEN: usize = 200;
 const SAVE_FLAG_OFFSET: usize = 184;
 const ON_BOARD_OFFSET: usize = 74;
@@ -37,22 +37,22 @@ const MODE_STATIC: u8 = 1;
 const BRIGHTNESS_100: u8 = 10 << 2;
 const COLOR_FLAG_CUSTOM: u8 = 0x80;
 const COLOR_FLAG_SYNC_ONBOARD: u8 = 0x01;
-/// Bits de synchro JPIPE1/JPIPE2 de la zone embarquée (inutiles en mode statique).
+/// JPIPE1/JPIPE2 sync bits of the onboard zone (useless in static mode).
 const COLOR_FLAG_SYNC_JPIPE: u8 = 0x30;
 const SPEED_FLAG_SYNC_JRGB: u8 = 0x80;
-/// ≤ 30 images/s.
+/// <= 30 frames/s.
 pub const MIN_FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 pub type Report = [u8; REPORT_LEN];
 
-/// Zone exposée et son offset dans le report.
+/// Exposed zone and its offset in the report.
 pub struct ZoneSlot {
     pub id: &'static str,
     pub label: &'static str,
     pub offset: usize,
 }
 
-/// Zones de la MS-7E06, dans l'ordre de `info().zones`.
+/// MS-7E06 zones, in `info().zones` order.
 pub const ZONES: [ZoneSlot; 3] = [
     ZoneSlot { id: "jrgb1", label: "JRGB", offset: 1 },
     ZoneSlot { id: "jargb1", label: "JARGB_V2 1", offset: 31 },
@@ -63,23 +63,23 @@ pub fn is_allowed(vid: u16, pid: u16) -> bool {
     vid == VID && ALLOWED_PIDS.contains(&pid)
 }
 
-/// Valide un report lu (`read` = octets renvoyés par `get_feature_report`).
-/// Accepte 185 ou 186 octets (certains pilotes ajoutent un octet), id 0x52.
+/// Validates a read report (`read` = bytes returned by `get_feature_report`).
+/// Accepts 185 or 186 bytes (some drivers add a byte), id 0x52.
 pub fn parse_report(read: &[u8]) -> Result<Report, String> {
     if read.len() != REPORT_LEN && read.len() != REPORT_LEN + 1 {
-        return Err(format!("longueur {} inattendue (attendu {REPORT_LEN})", read.len()));
+        return Err(format!("unexpected length {} (expected {REPORT_LEN})", read.len()));
     }
     if read[0] != REPORT_ID {
-        return Err(format!("id de report 0x{:02x} inattendu", read[0]));
+        return Err(format!("unexpected report id 0x{:02x}", read[0]));
     }
     let mut report = [0u8; REPORT_LEN];
     report.copy_from_slice(&read[..REPORT_LEN]);
-    // Jamais de sauvegarde en flash, même en restaurant.
+    // Never save to flash, even when restoring.
     report[SAVE_FLAG_OFFSET] = 0;
     Ok(report)
 }
 
-/// Couleur (effet, R, G, B) d'une zone telle que lue dans le report.
+/// Color (effect, R, G, B) of a zone as read from the report.
 pub fn zone_state(report: &Report, offset: usize) -> (u8, Rgb) {
     (report[offset], Rgb::new(report[offset + 1], report[offset + 2], report[offset + 3]))
 }
@@ -92,14 +92,14 @@ fn write_static(report: &mut Report, offset: usize, color: Rgb) {
     report[offset + 8] |= COLOR_FLAG_CUSTOM;
 }
 
-/// Construit le report « statique par zone » à partir de l'état d'origine.
-/// Les octets non concernés (nombre de LEDs ARGB, zones absentes) restent ceux d'origine.
+/// Builds the "static per zone" report from the original state.
+/// Unrelated bytes (ARGB LED count, absent zones) keep their original values.
 pub fn build_report(original: &Report, colors: &[Rgb; ZONES.len()]) -> Report {
     let mut report = *original;
     for (slot, color) in ZONES.iter().zip(colors) {
         write_static(&mut report, slot.offset, *color);
     }
-    // Carte sans LED embarquée : la zone embarquée pilote JRGB, on la recopie.
+    // Board without onboard LED: the onboard zone drives JRGB, so mirror it.
     let onboard = ON_BOARD_OFFSET;
     report[onboard] = MODE_STATIC;
     report.copy_within(2..5, onboard + 1);
@@ -112,7 +112,7 @@ pub fn build_report(original: &Report, colors: &[Rgb; ZONES.len()]) -> Report {
     report
 }
 
-/// Limiteur : au plus une écriture par `MIN_FRAME_INTERVAL`, rien si identique au dernier envoi.
+/// Limiter: at most one write per `MIN_FRAME_INTERVAL`, nothing if identical to the last send.
 #[derive(Default)]
 pub struct FrameGate {
     last_sent: Option<(Instant, Report)>,
@@ -135,26 +135,26 @@ impl FrameGate {
     }
 }
 
-/// Convertit `frame[zone][led]` en une couleur par zone (LED 0).
+/// Converts `frame[zone][led]` to one color per zone (LED 0).
 pub fn frame_colors(frame: &[Vec<Rgb>]) -> Result<[Rgb; ZONES.len()], HwError> {
     if frame.len() != ZONES.len() {
         return Err(HwError::Other(format!(
-            "image de {} zones, {} attendues",
+            "frame has {} zones, {} expected",
             frame.len(),
             ZONES.len()
         )));
     }
     let mut colors = [Rgb::BLACK; ZONES.len()];
     for (index, leds) in frame.iter().enumerate() {
-        // Une seule LED par zone : les LEDs en trop sont ignorées.
+        // One LED per zone: extra LEDs are ignored.
         colors[index] = *leds
             .first()
-            .ok_or_else(|| HwError::Other(format!("zone {} vide", ZONES[index].id)))?;
+            .ok_or_else(|| HwError::Other(format!("zone {} empty", ZONES[index].id)))?;
     }
     Ok(colors)
 }
 
-/// Lit le report courant (lecture seule).
+/// Reads the current report (read-only).
 pub fn read_report(device: &HidDevice) -> Result<Vec<u8>, String> {
     let mut buf = [0u8; READ_BUF_LEN];
     buf[0] = REPORT_ID;
@@ -167,7 +167,7 @@ pub struct MysticLight {
     device: HidDevice,
     original: Report,
     gate: FrameGate,
-    /// Vrai dès qu'une écriture a eu lieu : `restore` n'écrit que dans ce cas.
+    /// True once a write has happened: `restore` only writes in that case.
     dirty: bool,
 }
 
@@ -190,7 +190,7 @@ impl MysticLight {
     fn send(&self, report: &Report) -> Result<(), HwError> {
         self.device
             .send_feature_report(report)
-            .map_err(|e| HwError::Unavailable(format!("Mystic Light : {e}")))
+            .map_err(|e| HwError::Unavailable(format!("Mystic Light: {e}")))
     }
 }
 
@@ -217,7 +217,7 @@ impl RgbDevice for MysticLight {
         }
         match self.send(&self.original) {
             Ok(()) => self.dirty = false,
-            Err(e) => tracing::warn!("restauration Mystic Light échouée : {e}"),
+            Err(e) => tracing::warn!("Mystic Light restore failed: {e}"),
         }
         self.gate.reset();
     }
@@ -229,12 +229,12 @@ impl Drop for MysticLight {
     }
 }
 
-/// Ouvre les contrôleurs autorisés ; aucune écriture.
+/// Opens the allowed controllers; no write.
 pub fn detect() -> Vec<Box<dyn RgbDevice>> {
     let api = match HidApi::new() {
         Ok(api) => api,
         Err(e) => {
-            tracing::warn!("hidapi indisponible : {e}");
+            tracing::warn!("hidapi unavailable: {e}");
             return Vec::new();
         }
     };
@@ -243,7 +243,7 @@ pub fn detect() -> Vec<Box<dyn RgbDevice>> {
         if !is_allowed(info.vendor_id(), info.product_id()) {
             continue;
         }
-        // Une seule ouverture par PID (Windows peut exposer plusieurs collections).
+        // Open each PID once (Windows may expose several collections).
         let id = format!("mystic-light/{VID:04x}:{:04x}", info.product_id());
         if found.iter().any(|device| device.info().id == id) {
             continue;
@@ -251,7 +251,7 @@ pub fn detect() -> Vec<Box<dyn RgbDevice>> {
         match MysticLight::open(&api, info.path(), info.product_id()) {
             Ok(device) => found.push(Box::new(device)),
             Err(e) => tracing::warn!(
-                "Mystic Light {:04x} ignoré ({:?}) : {e}",
+                "Mystic Light {:04x} skipped ({:?}): {e}",
                 info.product_id(),
                 info.path()
             ),
@@ -264,15 +264,15 @@ pub fn detect() -> Vec<Box<dyn RgbDevice>> {
 mod tests {
     use super::*;
 
-    /// Report synthétique cohérent avec la disposition documentée.
+    /// Synthetic report consistent with the documented layout.
     fn fixture() -> Vec<u8> {
         let mut report = vec![0u8; REPORT_LEN];
         report[0] = REPORT_ID;
-        // JRAINBOW1 : arc-en-ciel (9), 0x28 luminosité, 40 LEDs.
+        // JRAINBOW1: rainbow (9), 0x28 brightness, 40 LEDs.
         report[31] = 9;
         report[35] = 0x28;
         report[41] = 40;
-        report[52] = 60; // JRAINBOW2 : 60 LEDs
+        report[52] = 60; // JRAINBOW2: 60 LEDs
         report[ON_BOARD_OFFSET + 4] = 0xA9;
         report[ON_BOARD_OFFSET + 8] = 0xB1;
         report[SAVE_FLAG_OFFSET] = 1;
@@ -308,16 +308,16 @@ mod tests {
         let report = build_report(&original, &[red, Rgb::new(0, 255, 0), blue]);
         assert_eq!(&report[1..10], &[1, 255, 0, 0, 0x28, 255, 0, 0, 0x80]);
         assert_eq!(&report[31..40], &[1, 0, 255, 0, 0x28, 0, 255, 0, 0x80]);
-        assert_eq!(report[41], 40, "nombre de LEDs conservé");
+        assert_eq!(report[41], 40, "LED count preserved");
         assert_eq!(&report[42..46], &[1, 0, 0, 255]);
         assert_eq!(report[52], 60);
-        // Zone embarquée : miroir de JRGB, synchro JRGB/JPIPE coupée.
+        // Onboard zone: mirror of JRGB, JRGB/JPIPE sync off.
         assert_eq!(&report[74..78], &[1, 255, 0, 0]);
         assert_eq!(report[78], 0x29);
         assert_eq!(report[82], 0x81);
         assert_eq!(report[SAVE_FLAG_OFFSET], 0);
         assert_eq!(report[0], REPORT_ID);
-        // Octets hors zones intacts.
+        // Bytes outside zones untouched.
         assert_eq!(&report[94..174], &original[94..174]);
     }
 

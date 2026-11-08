@@ -1,16 +1,16 @@
-//! Persistance de `config.toml` : chargement tolérant, sauvegarde atomique.
+//! `config.toml` persistence: tolerant loading, atomic saving.
 
 use anyhow::Context;
 use hub_core::config::Config;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// Dossier de l'application sous `%ProgramData%`.
+/// Application folder under `%ProgramData%`.
 const APP_DIR: &str = "ControlAnything";
-/// Dossier de l'ancien nom « PC Hub », repris une fois par [`migrate_legacy`].
+/// Folder of the former "PC Hub" name, imported once by [`migrate_legacy`].
 const LEGACY_DIR: &str = "PC Hub";
 
-/// Emplacement de la config système du daemon.
+/// Location of the daemon system config.
 pub fn config_path() -> PathBuf {
     if cfg!(windows) {
         windows_path(std::env::var_os("ProgramData"), APP_DIR)
@@ -19,14 +19,14 @@ pub fn config_path() -> PathBuf {
     }
 }
 
-/// `%ProgramData%\<dir>\config.toml`, avec repli si la variable manque.
+/// `%ProgramData%\<dir>\config.toml`, with a fallback if the variable is missing.
 fn windows_path(program_data: Option<OsString>, dir: &str) -> PathBuf {
     let base = program_data.map_or_else(|| PathBuf::from(r"C:\ProgramData"), PathBuf::from);
     base.join(dir).join("config.toml")
 }
 
-/// Windows : copie l'ancienne config `%ProgramData%\PC Hub\config.toml` si la nouvelle manque.
-/// L'ancienne est laissée en place (rien n'est jamais supprimé).
+/// Windows: copies the old config `%ProgramData%\PC Hub\config.toml` if the new one is missing.
+/// The old one is left in place (nothing is ever deleted).
 pub fn migrate_legacy(path: &Path) {
     if !cfg!(windows) {
         return;
@@ -41,20 +41,20 @@ pub fn migrate_legacy(path: &Path) {
         .and_then(|()| std::fs::copy(&legacy, path));
     match copied {
         Ok(_) => tracing::info!(
-            "config PC Hub migrée : {} -> {}",
+            "PC Hub config migrated: {} -> {}",
             legacy.display(),
             path.display()
         ),
-        Err(err) => tracing::error!("migration de {} : {err}", legacy.display()),
+        Err(err) => tracing::error!("migrating {}: {err}", legacy.display()),
     }
 }
 
-/// Migrer seulement si la nouvelle config n'existe pas et que l'ancienne est un fichier.
+/// Migrate only if the new config does not exist and the old one is a file.
 fn should_migrate(path: &Path, legacy: &Path) -> bool {
     !path.exists() && legacy.is_file()
 }
 
-/// `config.toml` -> `config.toml.<suffix>` dans le même dossier.
+/// `config.toml` -> `config.toml.<suffix>` in the same folder.
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.file_name().map(OsString::from).unwrap_or_default();
     name.push(".");
@@ -62,19 +62,19 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Charge la config. Absente -> défaut sauvegardé. Illisible ou invalide -> fichier mis de côté
-/// en `config.toml.bad` (jamais supprimé) puis défaut.
+/// Loads the config. Missing -> default saved. Unreadable or invalid -> file set aside
+/// as `config.toml.bad` (never deleted), then default.
 pub fn load(path: &Path) -> Config {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            tracing::info!("pas de config, création de {}", path.display());
+            tracing::info!("no config, creating {}", path.display());
             return save_default(path);
         }
         Err(err) => {
-            // Fichier présent mais inaccessible : on ne l'écrase pas.
+            // File present but inaccessible: do not overwrite it.
             tracing::error!(
-                "lecture {} : {err} ; config par défaut en mémoire",
+                "reading {}: {err}; default config in memory",
                 path.display()
             );
             return Config::default();
@@ -89,13 +89,13 @@ pub fn load(path: &Path) -> Config {
         Err(err) => {
             let backup = with_suffix(path, "bad");
             tracing::error!(
-                "{} : {err} ; copie dans {}",
+                "{}: {err}; copied to {}",
                 path.display(),
                 backup.display()
             );
             if let Err(err) = std::fs::rename(path, &backup) {
-                tracing::error!("sauvegarde de la config invalide impossible : {err}");
-                return Config::default(); // ne surtout pas écraser l'original
+                tracing::error!("cannot back up the invalid config: {err}");
+                return Config::default(); // never overwrite the original
             }
             save_default(path)
         }
@@ -110,15 +110,15 @@ fn save_default(path: &Path) -> Config {
     config
 }
 
-/// Écrit `config.toml.tmp` puis le renomme : un crash ne laisse jamais un fichier tronqué.
+/// Writes `config.toml.tmp` then renames it: a crash never leaves a truncated file.
 pub fn save(path: &Path, config: &Config) -> anyhow::Result<()> {
     let text = config.to_toml()?;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("création de {}", dir.display()))?;
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
     let tmp = with_suffix(path, "tmp");
-    std::fs::write(&tmp, text).with_context(|| format!("écriture de {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("remplacement de {}", path.display()))?;
+    std::fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))?;
     Ok(())
 }
 
@@ -148,13 +148,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let new = dir.join("new.toml");
         let legacy = dir.join("legacy.toml");
-        assert!(!should_migrate(&new, &legacy), "rien à migrer");
+        assert!(!should_migrate(&new, &legacy), "nothing to migrate");
         std::fs::write(&legacy, "x").unwrap();
-        assert!(should_migrate(&new, &legacy), "ancienne seule -> migrer");
+        assert!(should_migrate(&new, &legacy), "old only -> migrate");
         std::fs::write(&new, "x").unwrap();
         assert!(
             !should_migrate(&new, &legacy),
-            "nouvelle déjà là -> ne pas écraser"
+            "new already there -> do not overwrite"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }

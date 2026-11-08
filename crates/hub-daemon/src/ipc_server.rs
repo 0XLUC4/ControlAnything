@@ -1,4 +1,4 @@
-//! Serveur IPC local : diffuse l'état et le flux live, relaie les commandes au thread de contrôle.
+//! Local IPC server: broadcasts the state and live stream, forwards commands to the control thread.
 
 use crate::control::Command;
 use hub_core::ipc::{self, ClientMsg, DaemonMsg};
@@ -6,20 +6,20 @@ use std::sync::mpsc::Sender;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{broadcast, watch};
 
-/// Taille maximale d'une commande client ; au-delà, le client est déconnecté.
+/// Maximum size of a client command; beyond it, the client is disconnected.
 const MAX_LINE: usize = 1024 * 1024;
 
-/// Canaux partagés entre le thread de contrôle et les clients.
+/// Channels shared between the control thread and the clients.
 #[derive(Clone)]
 pub struct Channels {
     pub commands: Sender<Command>,
     pub live: broadcast::Sender<String>,
     pub state: watch::Receiver<String>,
-    /// Dernière liste d'appareils RGB (vide tant que la détection n'est pas finie).
+    /// Latest RGB device list (empty until detection is done).
     pub rgb: watch::Receiver<String>,
 }
 
-/// Un client : reçoit l'état courant, les appareils RGB, puis le flux live ; ses lignes sont des `ClientMsg`.
+/// One client: receives the current state, the RGB devices, then the live stream; its lines are `ClientMsg`.
 async fn handle_client<S: AsyncRead + AsyncWrite>(stream: S, channels: Channels) {
     let live_rx = channels.live.subscribe();
     let (reader, writer) = tokio::io::split(stream);
@@ -27,7 +27,7 @@ async fn handle_client<S: AsyncRead + AsyncWrite>(stream: S, channels: Channels)
         () = read_commands(reader, &channels) => {}
         () = write_stream(writer, channels.state.clone(), channels.rgb.clone(), live_rx) => {}
     }
-    tracing::debug!("client déconnecté");
+    tracing::debug!("client disconnected");
 }
 
 async fn write_stream<W: AsyncWrite + Unpin>(
@@ -43,7 +43,7 @@ async fn write_stream<W: AsyncWrite + Unpin>(
     loop {
         let line = match live.recv().await {
             Ok(line) => line,
-            Err(broadcast::error::RecvError::Lagged(_)) => continue, // client lent : on saute
+            Err(broadcast::error::RecvError::Lagged(_)) => continue, // slow client: skip
             Err(broadcast::error::RecvError::Closed) => return,
         };
         if writer.write_all(line.as_bytes()).await.is_err() {
@@ -63,11 +63,11 @@ async fn read_commands<R: AsyncRead + Unpin>(reader: R, channels: &Channels) {
             Ok(_) => {}
         }
         if buf.len() > MAX_LINE && buf.last() != Some(&b'\n') {
-            tracing::warn!("commande client > 1 Mio, client déconnecté");
+            tracing::warn!("client command > 1 MiB, client disconnected");
             return;
         }
         let Ok(line) = std::str::from_utf8(&buf) else {
-            reply_error(channels, "commande non UTF-8".into());
+            reply_error(channels, "non UTF-8 command".into());
             continue;
         };
         if line.trim().is_empty() {
@@ -76,10 +76,10 @@ async fn read_commands<R: AsyncRead + Unpin>(reader: R, channels: &Channels) {
         match ipc::decode::<ClientMsg>(line) {
             Ok(msg) => {
                 if channels.commands.send(Command::Client(msg)).is_err() {
-                    return; // thread de contrôle arrêté
+                    return; // control thread stopped
                 }
             }
-            Err(err) => reply_error(channels, format!("commande illisible : {err}")),
+            Err(err) => reply_error(channels, format!("unreadable command: {err}")),
         }
     }
 }
@@ -95,10 +95,10 @@ fn reply_error(channels: &Channels, message: String) {
 pub async fn serve(channels: Channels) -> anyhow::Result<()> {
     let security = windows_pipe::PipeSecurity::new()?;
     let mut server = security.create(true)?;
-    tracing::info!("écoute sur {}", ipc::PIPE_NAME);
+    tracing::info!("listening on {}", ipc::PIPE_NAME);
     loop {
         server.connect().await?;
-        // Créer l'instance suivante avant de céder la connectée : aucun client ne trouve le pipe absent.
+        // Create the next instance before handing off the connected one: no client finds the pipe missing.
         let connected = std::mem::replace(&mut server, security.create(false)?);
         tokio::spawn(handle_client(connected, channels.clone()));
     }
@@ -116,14 +116,14 @@ mod windows_pipe {
     use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
     use windows::core::w;
 
-    /// DACL : SYSTEM et Administrateurs en total, utilisateurs interactifs en lecture/écriture
-    /// (l'UI non élevée envoie des commandes ; le daemon les re-valide toutes).
+    /// DACL: full access for SYSTEM and Administrators, read/write for interactive users
+    /// (the non-elevated UI sends commands; the daemon re-validates all of them).
     pub struct PipeSecurity(PSECURITY_DESCRIPTOR);
 
     impl PipeSecurity {
         pub fn new() -> io::Result<Self> {
             let mut descriptor = PSECURITY_DESCRIPTOR::default();
-            // SAFETY: chaîne SDDL statique valide, pointeur de sortie local ; libéré dans Drop.
+            // SAFETY: valid static SDDL string, local output pointer; freed in Drop.
             unsafe {
                 ConvertStringSecurityDescriptorToSecurityDescriptorW(
                     w!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"),
@@ -141,7 +141,7 @@ mod windows_pipe {
                 lpSecurityDescriptor: self.0.0,
                 bInheritHandle: false.into(),
             };
-            // SAFETY: `attributes` et le descripteur vivent pendant l'appel (CreateNamedPipeW les copie).
+            // SAFETY: `attributes` and the descriptor live during the call (CreateNamedPipeW copies them).
             unsafe {
                 ServerOptions::new()
                     .first_pipe_instance(first)
@@ -152,7 +152,7 @@ mod windows_pipe {
 
     impl Drop for PipeSecurity {
         fn drop(&mut self) {
-            // SAFETY: alloué par ConvertStringSecurityDescriptorToSecurityDescriptorW (LocalAlloc).
+            // SAFETY: allocated by ConvertStringSecurityDescriptorToSecurityDescriptorW (LocalAlloc).
             unsafe {
                 LocalFree(Some(HLOCAL(self.0.0)));
             }
@@ -175,9 +175,9 @@ pub async fn serve(channels: Channels) -> anyhow::Result<()> {
         _ => {}
     }
     let listener = UnixListener::bind(path)?;
-    // Toute commande est re-validée par le daemon ; groupe dédié au packaging.
+    // Every command is re-validated by the daemon; a dedicated group is left to packaging.
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))?;
-    tracing::info!("écoute sur {}", ipc::SOCKET_PATH);
+    tracing::info!("listening on {}", ipc::SOCKET_PATH);
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(handle_client(stream, channels.clone()));

@@ -1,6 +1,6 @@
-# Unité systemd du daemon ControlAnything (root : écriture dans /sys/class/hwmon et /etc/controlanything).
+# systemd unit for the ControlAnything daemon (root: writes to /sys/class/hwmon and /etc/controlanything).
 [Unit]
-Description=ControlAnything - contrôle du PC
+Description=ControlAnything - PC control daemon
 After=systemd-modules-load.service
 
 [Service]
@@ -8,7 +8,7 @@ Type=simple
 ExecStart=/usr/bin/controlanythingd
 Restart=on-failure
 RestartSec=5
-# SIGTERM -> arrêt propre : ventilos rendus au BIOS (pwm*_enable restauré)
+# SIGTERM -> clean shutdown: fans handed back to the BIOS (pwm*_enable restored)
 KillSignal=SIGTERM
 TimeoutStopSec=10
 

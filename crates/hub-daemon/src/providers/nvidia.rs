@@ -1,4 +1,4 @@
-//! GPU NVIDIA via NVML (bibliothèque chargée au runtime, présente avec le pilote).
+//! NVIDIA GPU via NVML (library loaded at runtime, shipped with the driver).
 
 use super::bytes_to_mib;
 use hub_core::fan::{FanChannel, FanController};
@@ -10,14 +10,14 @@ use std::collections::BTreeSet;
 
 pub struct NvidiaProvider {
     nvml: Nvml,
-    /// Noms courts par index GPU, ex. "RTX 5080".
+    /// Short names by GPU index, e.g. "RTX 5080".
     names: Vec<String>,
 }
 
 impl NvidiaProvider {
     pub fn open() -> Result<Self, HwError> {
         let unavailable =
-            |err: nvml_wrapper::error::NvmlError| HwError::Unavailable(format!("NVML : {err}"));
+            |err: nvml_wrapper::error::NvmlError| HwError::Unavailable(format!("NVML: {err}"));
         let nvml = Nvml::init().map_err(unavailable)?;
         let count = nvml.device_count().map_err(unavailable)?;
         let names = (0..count)
@@ -49,7 +49,7 @@ impl SensorProvider for NvidiaProvider {
             let Ok(gpu) = self.nvml.device_by_index(i as u32) else {
                 continue;
             };
-            // Une métrique non supportée (Err) est simplement omise.
+            // An unsupported metric (Err) is simply omitted.
             let mut push = |metric: &str, label: &str, kind: SensorKind, value: Option<f32>| {
                 if let Some(value) = value {
                     out.push(Reading {
@@ -93,7 +93,7 @@ impl SensorProvider for NvidiaProvider {
                 SensorKind::Clock,
                 gpu.clock_info(Clock::Graphics).ok().map(|c| c as f32),
             );
-            // NVML donne la consigne ventilo en % (pas en RPM) : exposée en Load pour garder la bonne unité.
+            // NVML gives the fan target in % (not RPM): exposed as Load to keep the right unit.
             for j in 0..gpu.num_fans().unwrap_or(0) {
                 push(
                     &format!("fan{j}"),
@@ -107,11 +107,11 @@ impl SensorProvider for NvidiaProvider {
     }
 }
 
-/// Ventilateurs GPU pilotés via NVML (écriture : droits admin requis).
+/// GPU fans driven via NVML (writing requires admin rights).
 pub struct NvidiaFans {
     nvml: Nvml,
     channels: Vec<FanChannel>,
-    /// Canaux (gpu, fan) passés en manuel : seuls ceux-là sont rendus au pilote.
+    /// (gpu, fan) channels switched to manual: only those are handed back to the driver.
     touched: BTreeSet<(u32, u32)>,
 }
 
@@ -127,7 +127,7 @@ impl NvidiaFans {
             for j in 0..gpu.num_fans().unwrap_or(0) {
                 channels.push(FanChannel {
                     id: format!("gpu{i}/fan{j}"),
-                    label: format!("{} Ventilateur {}", short_name(&name), j + 1),
+                    label: format!("{} Fan {}", short_name(&name), j + 1),
                     rpm_sensor: None,
                 });
             }
@@ -145,7 +145,7 @@ impl NvidiaFans {
         action: impl FnOnce(&mut nvml_wrapper::Device<'_>, u32) -> Result<(), NvmlError>,
     ) -> Result<(u32, u32), HwError> {
         let (i, j) = parse_channel(channel)
-            .ok_or_else(|| HwError::Other(format!("canal inconnu : {channel}")))?;
+            .ok_or_else(|| HwError::Other(format!("unknown channel: {channel}")))?;
         let mut gpu = self.nvml.device_by_index(i).map_err(map_err)?;
         action(&mut gpu, j).map_err(map_err)?;
         Ok((i, j))
@@ -163,8 +163,8 @@ fn parse_channel(id: &str) -> Option<(u32, u32)> {
 
 fn map_err(err: NvmlError) -> HwError {
     match err {
-        NvmlError::NoPermission => HwError::PermissionDenied(format!("NVML : {err}")),
-        other => HwError::Other(format!("NVML : {other}")),
+        NvmlError::NoPermission => HwError::PermissionDenied(format!("NVML: {err}")),
+        other => HwError::Other(format!("NVML: {other}")),
     }
 }
 
@@ -197,7 +197,7 @@ impl FanController for NvidiaFans {
                 .device_by_index(i)
                 .and_then(|mut gpu| gpu.set_default_fan_speed(j));
             if let Err(err) = result {
-                tracing::error!("restauration gpu{i}/fan{j} : {err}");
+                tracing::error!("restoring gpu{i}/fan{j}: {err}");
             }
         }
     }

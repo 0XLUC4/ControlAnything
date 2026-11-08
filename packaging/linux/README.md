@@ -1,14 +1,14 @@
-# ControlAnything sous Linux (systemd)
+# ControlAnything on Linux (systemd)
 
-Le daemon `controlanythingd` tourne en **root** : il écrit dans `/sys/class/hwmon/*/pwm*` et sa config
-vit dans `/etc/controlanything/config.toml` (créée au premier lancement).
+The `controlanythingd` daemon runs as **root**: it writes to `/sys/class/hwmon/*/pwm*` and its config
+lives in `/etc/controlanything/config.toml` (created on first launch).
 
-## Prérequis capteurs
+## Sensor requirements
 
-- `lm-sensors`, puis `sudo sensors-detect` (accepter les modules proposés) et vérifier avec `sensors`.
-- Cartes MSI (Super I/O **NCT6687D**) : le noyau ne la gère pas en natif, installer le module
-  DKMS `nct6687d` (https://github.com/Fred78290/nct6687d), puis `sudo modprobe nct6687` et
-  `echo nct6687 | sudo tee /etc/modules-load.d/nct6687.conf` pour le charger au boot.
+- `lm-sensors`, then `sudo sensors-detect` (accept the suggested modules) and check with `sensors`.
+- MSI boards (**NCT6687D** Super I/O): the kernel does not support it natively, install the
+  `nct6687d` DKMS module (https://github.com/Fred78290/nct6687d), then `sudo modprobe nct6687` and
+  `echo nct6687 | sudo tee /etc/modules-load.d/nct6687.conf` to load it at boot.
 
 ## Installation
 
@@ -20,9 +20,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now controlanythingd
 ```
 
-Logs : `journalctl -u controlanythingd -f`. Arrêt : `sudo systemctl stop controlanythingd` (ventilos rendus au BIOS).
+Logs: `journalctl -u controlanythingd -f`. Stop: `sudo systemctl stop controlanythingd` (fans handed back to the BIOS).
 
-## Désinstallation
+## Uninstall
 
 ```sh
 sudo systemctl disable --now controlanythingd

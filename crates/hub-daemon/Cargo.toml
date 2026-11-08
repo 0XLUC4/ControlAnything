@@ -20,13 +20,13 @@ nvml-wrapper.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 hub-backend-windows.workspace = true
-# DACL du named pipe (SDDL -> descripteur de sécurité)
+# Named pipe DACL (SDDL -> security descriptor)
 windows = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
 ] }
-# Service Windows (SCM) et logs fichiers en mode service
+# Windows service (SCM) and file logs in service mode
 windows-service = "0.8.1"
 tracing-appender = "0.2.5"
 

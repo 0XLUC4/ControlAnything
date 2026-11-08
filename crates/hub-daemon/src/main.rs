@@ -1,8 +1,8 @@
-//! controlanythingd (daemon ControlAnything) : lit les capteurs, pilote les ventilos selon le profil actif et dialogue avec l'UI.
+//! controlanythingd (ControlAnything daemon): reads the sensors, drives the fans from the active profile and talks to the UI.
 //!
-//! Sécurité : à l'arrêt propre (Ctrl+C, fermeture, extinction, SIGTERM) ou en cas de panique,
-//! les contrôleurs sont lâchés et rendent les ventilos au BIOS. Un kill brutal ne peut rien
-//! restaurer : le BIOS reprend la main au prochain redémarrage.
+//! Safety: on a clean stop (Ctrl+C, close, shutdown, SIGTERM) or on panic, the controllers are
+//! dropped and hand the fans back to the BIOS. A hard kill cannot restore anything: the BIOS
+//! takes over again at the next reboot.
 
 mod config_store;
 mod control;
@@ -19,7 +19,7 @@ use std::sync::mpsc::Sender;
 use tokio::sync::{broadcast, watch};
 use tracing_subscriber::fmt::MakeWriter;
 
-/// Sous-commande demandée sur la ligne de commande.
+/// Subcommand requested on the command line.
 #[derive(Debug, PartialEq)]
 enum Mode {
     Console,
@@ -35,7 +35,7 @@ fn parse_mode(arg: Option<&str>) -> Result<Mode, String> {
         Some("install") => Ok(Mode::Install),
         Some("uninstall") => Ok(Mode::Uninstall),
         Some(other) => Err(format!(
-            "argument inconnu « {other} » (attendu : run, install, uninstall, service)"
+            "unknown argument \"{other}\" (expected: run, install, uninstall, service)"
         )),
     }
 }
@@ -52,21 +52,21 @@ fn main() -> ExitCode {
         Ok(Mode::Uninstall) => service::uninstall(),
         #[cfg(not(windows))]
         Ok(_) => Err(anyhow::anyhow!(
-            "sous-commande réservée à Windows ; sous Linux, utilisez systemd (packaging/linux)"
+            "Windows-only subcommand; on Linux, use systemd (packaging/linux)"
         )),
         Err(message) => Err(anyhow::anyhow!(message)),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("erreur : {err:#}");
+            eprintln!("error: {err:#}");
             ExitCode::FAILURE
         }
     }
 }
 
-/// Logs vers `writer` + journalisation des paniques. La console PowerShell 5.1 n'interprète pas
-/// les couleurs ANSI, et les fichiers n'en veulent pas.
+/// Logs to `writer` + panic logging. The PowerShell 5.1 console does not interpret
+/// ANSI colors, and files do not want them.
 fn init_tracing<W>(writer: W)
 where
     W: for<'a> MakeWriter<'a> + Send + Sync + 'static,
@@ -78,26 +78,26 @@ where
         .with_ansi(!cfg!(windows))
         .with_writer(writer)
         .init();
-    // Le déroulement (unwind) qui suit lâche les contrôleurs -> ventilos rendus au BIOS.
-    std::panic::set_hook(Box::new(|info| tracing::error!("panique : {info}")));
+    // The unwind that follows drops the controllers -> fans handed back to the BIOS.
+    std::panic::set_hook(Box::new(|info| tracing::error!("panic: {info}")));
 }
 
-/// Mode console : tourne jusqu'à Ctrl+C / fermeture / extinction / SIGTERM.
+/// Console mode: runs until Ctrl+C / close / shutdown / SIGTERM.
 fn run_console() -> anyhow::Result<()> {
     init_tracing(std::io::stdout);
     tokio::runtime::Runtime::new()?.block_on(async {
         let daemon = start()?;
         run(daemon, async {
             match shutdown_signal().await {
-                Ok(signal) => tracing::info!("{signal} reçu, arrêt"),
-                Err(err) => tracing::error!("signaux : {err}"),
+                Ok(signal) => tracing::info!("{signal} received, stopping"),
+                Err(err) => tracing::error!("signals: {err}"),
             }
         })
         .await
     })
 }
 
-/// Daemon démarré : threads de contrôle et RGB, leurs canaux de commandes et les canaux IPC.
+/// Started daemon: control and RGB threads, their command channels and the IPC channels.
 struct Daemon {
     commands: Sender<Command>,
     control: std::thread::JoinHandle<()>,
@@ -106,13 +106,13 @@ struct Daemon {
     channels: ipc_server::Channels,
 }
 
-/// Démarrage commun console/service : config, ouverture des providers, threads de contrôle et RGB.
+/// Common console/service startup: config, opening providers, control and RGB threads.
 fn start() -> anyhow::Result<Daemon> {
     let path = config_store::config_path();
     config_store::migrate_legacy(&path);
     let config = config_store::load(&path);
     tracing::info!(
-        "config {} (profil {})",
+        "config {} (profile {})",
         path.display(),
         config.active_profile
     );
@@ -124,7 +124,7 @@ fn start() -> anyhow::Result<Daemon> {
     let (rgb_commands, rgb_rx) = std::sync::mpsc::channel();
     let rgb_config = config.rgb.clone();
     let rgb_live = live.clone();
-    // Thread séparé : un appareil RGB lent ou en panique ne touche pas à la régulation des ventilos.
+    // Separate thread: a slow or panicking RGB device does not affect fan control.
     let rgb = std::thread::Builder::new()
         .name("rgb".into())
         .spawn(move || rgb::run(rgb_config, rgb_rx, rgb_live, rgb_state_tx))?;
@@ -156,7 +156,7 @@ fn start() -> anyhow::Result<Daemon> {
     })
 }
 
-/// Sert l'IPC jusqu'à `stop`, puis arrête proprement (ventilos rendus au BIOS).
+/// Serves IPC until `stop`, then shuts down cleanly (fans handed back to the BIOS).
 async fn run(daemon: Daemon, stop: impl Future<Output = ()>) -> anyhow::Result<()> {
     let Daemon {
         commands,
@@ -169,40 +169,40 @@ async fn run(daemon: Daemon, stop: impl Future<Output = ()>) -> anyhow::Result<(
     tokio::select! {
         result = ipc_server::serve(channels) => {
             if let Err(err) = result {
-                tracing::error!("serveur IPC : {err:#}");
+                tracing::error!("IPC server: {err:#}");
             }
         }
         () = stop => {}
-        _ = &mut control_done => anyhow::bail!("boucle de contrôle arrêtée inopinément"),
+        _ = &mut control_done => anyhow::bail!("control loop stopped unexpectedly"),
     }
     stop_rgb(&rgb_commands, rgb).await;
     shutdown(&commands, control_done).await
 }
 
-/// Arrête le thread RGB et attend que l'éclairage soit rendu au firmware.
-/// Une panique RGB est seulement journalisée : elle ne doit pas faire échouer l'arrêt des ventilos.
+/// Stops the RGB thread and waits for the lighting to be handed back to firmware.
+/// An RGB panic is only logged: it must not make the fan shutdown fail.
 async fn stop_rgb(commands: &Sender<RgbCmd>, rgb: std::thread::JoinHandle<()>) {
-    let _ = commands.send(RgbCmd::Stop); // déjà arrêté : rien à faire
+    let _ = commands.send(RgbCmd::Stop); // already stopped: nothing to do
     match tokio::task::spawn_blocking(move || rgb.join()).await {
         Ok(Ok(())) => {}
-        Ok(Err(_)) => tracing::error!("le thread RGB a paniqué (ventilos non concernés)"),
-        Err(err) => tracing::error!("attente du thread RGB : {err}"),
+        Ok(Err(_)) => tracing::error!("the RGB thread panicked (fans not affected)"),
+        Err(err) => tracing::error!("waiting for the RGB thread: {err}"),
     }
 }
 
-/// Envoie `Stop` au thread de contrôle et attend qu'il ait rendu les ventilos au BIOS.
+/// Sends `Stop` to the control thread and waits until it has handed the fans back to the BIOS.
 async fn shutdown(
     commands: &Sender<Command>,
     control_done: tokio::task::JoinHandle<std::thread::Result<()>>,
 ) -> anyhow::Result<()> {
-    let _ = commands.send(Command::Stop); // déjà arrêté : rien à faire
+    let _ = commands.send(Command::Stop); // already stopped: nothing to do
     match control_done.await {
         Ok(Ok(())) => Ok(()),
-        _ => anyhow::bail!("arrêt de la boucle de contrôle en erreur"),
+        _ => anyhow::bail!("control loop stopped with an error"),
     }
 }
 
-/// Attend un signal d'arrêt. Windows : fermeture console et extinction laissent ~5 s pour restaurer.
+/// Waits for a stop signal. Windows: console close and shutdown leave ~5 s to restore.
 #[cfg(windows)]
 async fn shutdown_signal() -> std::io::Result<&'static str> {
     use tokio::signal::windows::{ctrl_close, ctrl_shutdown};
@@ -210,8 +210,8 @@ async fn shutdown_signal() -> std::io::Result<&'static str> {
     let mut shutdown = ctrl_shutdown()?;
     tokio::select! {
         result = tokio::signal::ctrl_c() => result.map(|()| "Ctrl+C"),
-        _ = close.recv() => Ok("fermeture"),
-        _ = shutdown.recv() => Ok("extinction"),
+        _ = close.recv() => Ok("close"),
+        _ = shutdown.recv() => Ok("shutdown"),
     }
 }
 

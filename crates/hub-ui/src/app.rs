@@ -1,6 +1,6 @@
-//! Vue racine : barre de titre, navigation latérale, réception des messages du daemon.
-//! L'entité vit au niveau de l'application : elle survit à la fermeture de la fenêtre
-//! (zone de notification) ; seuls les contrôles à état sont recréés à chaque ouverture.
+//! Root view: title bar, side navigation, reception of daemon messages.
+//! The entity lives at application level: it outlives the window
+//! (system tray); only the stateful controls are recreated on each opening.
 
 use std::time::{Duration, Instant};
 
@@ -41,7 +41,7 @@ pub enum Page {
     Settings,
 }
 
-/// Contrôles à état liés à la fenêtre ouverte (recréés à chaque ouverture).
+/// Stateful controls tied to the open window (recreated on each opening).
 #[derive(Clone)]
 pub struct Controls {
     profile_select: Entity<SelectState<Vec<SharedString>>>,
@@ -57,13 +57,13 @@ pub struct HubApp {
     dashboard: Dashboard,
     pub fans: FansPage,
     pub lighting: LightingPage,
-    /// `None` quand l'application est réduite dans la zone de notification.
+    /// `None` when the application is minimized to the system tray.
     pub controls: Option<Controls>,
     pub window: Option<AnyWindowHandle>,
     tray: Option<Tray>,
     pub hotkeys: Option<Hotkeys>,
     alerts: Alerts,
-    /// Premier clic sur « Réinitialiser le profil » : confirmation attendue jusqu'à cet instant.
+    /// First click on "Reset profile": confirmation expected until this instant.
     pub confirm_reset_until: Option<Instant>,
     tx: Sender<ClientMsg>,
     window_subscriptions: Vec<Subscription>,
@@ -79,7 +79,7 @@ impl HubApp {
         mut hotkeys: Option<Hotkeys>,
         cx: &mut Context<Self>,
     ) -> Self {
-        // Réception des messages sur le thread UI ; s'arrête si l'entité est détruite.
+        // Receives messages on the UI thread; stops if the entity is dropped.
         cx.spawn(async move |this, cx| {
             while let Ok(msg) = rx.recv().await {
                 if this.update(cx, |app, cx| app.receive(msg, cx)).is_err() {
@@ -89,7 +89,7 @@ impl HubApp {
         })
         .detach();
 
-        // Commandes de la zone de notification et des raccourcis globaux.
+        // Commands from the system tray and global hotkeys.
         cx.spawn(async move |this, cx| {
             while let Ok(command) = commands.recv().await {
                 if this.update(cx, |app, cx| app.command(command, cx)).is_err() {
@@ -99,13 +99,13 @@ impl HubApp {
         })
         .detach();
 
-        // Chaque seconde : statut « déconnecté » sans nouveau message, alerte daemon arrêté.
+        // Every second: "disconnected" status without new messages, daemon stopped alert.
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let ticked = this.update(cx, |app, cx| {
                     if app.alerts.daemon_lost(app.state.last_update(), Instant::now()) {
-                        notify("ControlAnything : service arrêté", "Ventilateurs rendus au BIOS.");
+                        notify("ControlAnything: service stopped", "Fans handed back to the BIOS.");
                     }
                     cx.notify();
                 });
@@ -137,7 +137,7 @@ impl HubApp {
         }
     }
 
-    /// Crée les contrôles à état de la nouvelle fenêtre.
+    /// Creates the stateful controls of the new window.
     pub fn attach_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let profile_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let mut subscriptions = vec![cx.subscribe_in(
@@ -154,7 +154,7 @@ impl HubApp {
         let (lighting, lighting_subscriptions) = LightingControls::new(window, cx);
         subscriptions.extend(lighting_subscriptions);
         let profile_name =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Nom du nouveau profil"));
+            cx.new(|cx| InputState::new(window, cx).placeholder("New profile name"));
         self.fans.source_items.clear();
         self.controls = Some(Controls {
             profile_select,
@@ -165,7 +165,7 @@ impl HubApp {
         self.window_subscriptions = subscriptions;
     }
 
-    /// Fenêtre fermée : libère ses contrôles. Renvoie `true` s'il faut quitter l'application.
+    /// Window closed: frees its controls. Returns `true` if the application must quit.
     pub fn window_closed(&mut self) -> bool {
         self.window = None;
         self.controls = None;
@@ -186,8 +186,8 @@ impl HubApp {
         self.state.receive(msg);
         if self.alerts.failsafe_rising(self.state.failsafe) {
             notify(
-                "Surchauffe détectée — ventilateurs à 100 %",
-                "Seuil critique CPU/GPU dépassé : tous les ventilateurs pilotés sont forcés à 100 %.",
+                "Overheating detected: fans at 100%",
+                "Critical CPU/GPU threshold exceeded: all controlled fans are forced to 100%.",
             );
         }
         if profiles_changed {
@@ -202,7 +202,7 @@ impl HubApp {
     fn command(&mut self, command: Command, cx: &mut Context<Self>) {
         match command {
             Command::Open => {
-                // Hors de la mise à jour de l'entité : l'ouverture la met à jour à son tour.
+                // Outside the entity update: opening updates it in turn.
                 let hub = cx.entity();
                 cx.defer(move |cx| crate::show_window(&hub, cx));
             }
@@ -220,11 +220,11 @@ impl HubApp {
                 }
             }
         }
-        // Un clic coche l'élément du menu même si rien ne change : on resynchronise.
+        // A click checks the menu item even if nothing changes: resync.
         self.sync_tray();
     }
 
-    /// Demande au daemon d'activer un profil (sans effet s'il l'est déjà).
+    /// Asks the daemon to activate a profile (no effect if already active).
     pub fn activate_profile(&self, name: String) {
         let active = self.state.config.as_ref().map(|c| c.active_profile.as_str());
         if active != Some(name.as_str()) {
@@ -241,13 +241,13 @@ impl HubApp {
     }
 
     pub fn send(&self, msg: ClientMsg) {
-        // Canal non borné : échoue seulement si le client IPC est arrêté.
+        // Unbounded channel: fails only if the IPC client is stopped.
         if self.tx.try_send(msg).is_err() {
-            tracing::warn!("client IPC arrêté : commande perdue");
+            tracing::warn!("IPC client stopped: command lost");
         }
     }
 
-    /// Valide localement le brouillon puis l'envoie au daemon.
+    /// Validates the draft locally then sends it to the daemon.
     pub fn apply_draft(&mut self, cx: &mut Context<Self>) {
         let Some(mut config) = self.state.draft.clone() else {
             return;
@@ -274,7 +274,7 @@ impl HubApp {
         cx.notify();
     }
 
-    /// Aligne le sélecteur de profil sur la config du daemon.
+    /// Aligns the profile selector with the daemon config.
     fn sync_profile_select(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(config), Some(controls)) = (self.state.config.as_ref(), self.controls.as_ref())
         else {
@@ -296,7 +296,7 @@ impl HubApp {
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let item = |label: &'static str, icon: IconName, page: Page, cx: &mut Context<Self>| {
-            // `min_h` : l'élément impose `h_7` après notre style, trop bas pour la surbrillance.
+            // `min_h`: the item forces `h_7` after our style, too short for the highlight.
             SidebarMenuItem::new(label)
                 .icon(icon)
                 .min_h(px(40.))
@@ -309,9 +309,9 @@ impl HubApp {
                 }))
         };
         let status = if self.state.connected() {
-            solid_tag(GREEN).rounded_full().child("Connecté")
+            solid_tag(GREEN).rounded_full().child("Connected")
         } else {
-            solid_tag(RED).rounded_full().child("Daemon déconnecté")
+            solid_tag(RED).rounded_full().child("Daemon disconnected")
         };
         Sidebar::new("nav")
             .w(px(220.))
@@ -320,10 +320,10 @@ impl HubApp {
                 SidebarMenu::new()
                     .gap_1()
                     .pt_3()
-                    .child(item("Tableau de bord", IconName::LayoutDashboard, Page::Dashboard, cx))
-                    .child(item("Ventilateurs", IconName::Fan, Page::Fans, cx))
-                    .child(item("Éclairage", IconName::Lightbulb, Page::Lighting, cx))
-                    .child(item("Paramètres", IconName::Settings, Page::Settings, cx)),
+                    .child(item("Dashboard", IconName::LayoutDashboard, Page::Dashboard, cx))
+                    .child(item("Fans", IconName::Fan, Page::Fans, cx))
+                    .child(item("Lighting", IconName::Lightbulb, Page::Lighting, cx))
+                    .child(item("Settings", IconName::Settings, Page::Settings, cx)),
             )
     }
 
@@ -355,18 +355,18 @@ impl HubApp {
                             row.child(
                                 solid_tag(RED)
                                     .rounded_full()
-                                    .child("SURCHAUFFE – ventilateurs à 100 %"),
+                                    .child("OVERHEATING: fans at 100%"),
                             )
                         })
                         .when_some(profile_select, |row, select| {
-                            // Toute la barre est une zone « déplacer la fenêtre » (HTCAPTION sous
-                            // Windows) : sans `occlude`, Windows avale le clic avant GPUI.
+                            // The whole bar is a "move window" area (HTCAPTION on
+                            // Windows): without `occlude`, Windows swallows the click before GPUI.
                             row.child(
                                 div().occlude().child(
                                     Select::new(&select)
                                         .id("profile")
                                         .small()
-                                        .title_prefix("Profil : ")
+                                        .title_prefix("Profile: ")
                                         .w(px(220.)),
                                 ),
                             )
@@ -375,7 +375,7 @@ impl HubApp {
         )
     }
 
-    /// Bandeau d'information ou d'erreur, fermable.
+    /// Closable info or error banner.
     fn notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = cx.theme();
         let (text, color) = match self.state.notice.as_ref()? {
@@ -405,7 +405,7 @@ impl HubApp {
         )
     }
 
-    /// Barre « Appliquer / Annuler » tant que le brouillon diffère de la config du daemon.
+    /// "Apply / Cancel" bar while the draft differs from the daemon config.
     fn apply_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.state.dirty() || self.page == Page::Dashboard {
             return None;
@@ -419,7 +419,7 @@ impl HubApp {
                 .border_1()
                 .border_color(theme.primary.opacity(0.5))
                 .bg(theme.primary.opacity(0.1))
-                .child(div().text_sm().child("Modifications non appliquées"))
+                .child(div().text_sm().child("Unapplied changes"))
                 .child(
                     h_flex()
                         .gap_2()
@@ -428,7 +428,7 @@ impl HubApp {
                                 .outline()
                                 .small()
                                 .icon(IconName::Undo2)
-                                .label("Annuler")
+                                .label("Cancel")
                                 .on_click(cx.listener(|app, _, _, cx| app.reset_draft(cx))),
                         )
                         .child(
@@ -436,7 +436,7 @@ impl HubApp {
                                 .primary()
                                 .small()
                                 .icon(IconName::Check)
-                                .label("Appliquer")
+                                .label("Apply")
                                 .on_click(cx.listener(|app, _, _, cx| app.apply_draft(cx))),
                         ),
                 )

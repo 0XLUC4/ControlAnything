@@ -1,4 +1,4 @@
-//! Cartes du haut : processeur, carte graphique, mémoire.
+//! Top cards: processor, graphics card, memory.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
@@ -18,14 +18,14 @@ const RAM_USED: &str = "ram/used";
 const RAM_TOTAL: &str = "ram/total";
 const RAM_LOAD: &str = "ram/load";
 
-/// Seuils de couleur des températures (configurables en phase 2).
+/// Temperature color thresholds (configurable in phase 2).
 const TEMP_WARM: f32 = 60.0;
 const TEMP_HOT: f32 = 80.0;
 const GREEN: u32 = 0x22c55e;
 const ORANGE: u32 = 0xf97316;
 const RED: u32 = 0xef4444;
 
-/// Couleur (hex RGB) d'une température : vert < 60, orange < 80, rouge au-delà.
+/// Color (hex RGB) of a temperature: green < 60, orange < 80, red above.
 pub fn temp_color(celsius: f32) -> u32 {
     if celsius < TEMP_WARM {
         GREEN
@@ -36,7 +36,7 @@ pub fn temp_color(celsius: f32) -> u32 {
     }
 }
 
-/// Rangée des trois cartes, et les ids des mesures qu'elles affichent (exclues du tableau).
+/// Row of the three cards, and the ids of the readings they show (excluded from the table).
 pub fn cards_row(readings: &[Reading], unit: TempUnit, cx: &App) -> (AnyElement, Vec<String>) {
     let cpu_temp = find_kind(readings, Device::Cpu, SensorKind::Temperature);
     let cpu_load = find_kind(readings, Device::Cpu, SensorKind::Load);
@@ -64,35 +64,35 @@ pub fn cards_row(readings: &[Reading], unit: TempUnit, cx: &App) -> (AnyElement,
 
     let value = |r: Option<&Reading>| r.map(|r| r.value);
     let ram = match (value(ram_used), value(ram_total)) {
-        (Some(used), Some(total)) => format!("{:.1} / {:.1} Gio", used / 1024.0, total / 1024.0),
-        _ => "—".into(),
+        (Some(used), Some(total)) => format!("{:.1} / {:.1} GiB", used / 1024.0, total / 1024.0),
+        _ => "-".into(),
     };
 
     let row = h_flex()
         .gap_4()
         .items_stretch()
         .child(card(
-            "Processeur",
+            "Processor",
             IconName::Cpu,
             value(cpu_temp),
             unit,
-            vec![("Charge", format_value(value(cpu_load), SensorKind::Load, unit))],
+            vec![("Load", format_value(value(cpu_load), SensorKind::Load, unit))],
             cx,
         ))
         .child(card(
-            "Carte graphique",
+            "Graphics card",
             IconName::Gpu,
             value(gpu_temp),
             unit,
             vec![
-                ("Charge", format_value(value(gpu_load), SensorKind::Load, unit)),
+                ("Load", format_value(value(gpu_load), SensorKind::Load, unit)),
                 (
-                    "Puissance",
+                    "Power",
                     format_value(value(gpu_power), SensorKind::Power, unit),
                 ),
                 ("VRAM", format_value(value(gpu_vram), SensorKind::Memory, unit)),
                 (
-                    "Ventilateur",
+                    "Fan",
                     format_value(value(gpu_fan), SensorKind::Load, unit),
                 ),
             ],
@@ -103,7 +103,7 @@ pub fn cards_row(readings: &[Reading], unit: TempUnit, cx: &App) -> (AnyElement,
     (row, shown)
 }
 
-/// Carte avec une température en grand et des lignes de détail.
+/// Card with a large temperature and detail lines.
 fn card(
     title: &str,
     icon: IconName,
@@ -114,7 +114,7 @@ fn card(
 ) -> impl IntoElement {
     let theme = cx.theme();
     let color: Hsla = temp.map_or(theme.muted_foreground, |t| rgb(temp_color(t)).into());
-    let big = temp.map_or("—".into(), |t| format!("{:.0}", unit.convert(t)));
+    let big = temp.map_or("-".into(), |t| format!("{:.0}", unit.convert(t)));
     card_frame(title, icon, big_value(big, unit.symbol(), color, cx), cx).child(
         v_flex()
             .gap_1()
@@ -124,18 +124,18 @@ fn card(
 
 fn ram_card(used_total: String, load: Option<f32>, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
-    let big = load.map_or("—".into(), |l| format!("{l:.0}"));
+    let big = load.map_or("-".into(), |l| format!("{l:.0}"));
     card_frame(
-        "Mémoire",
+        "Memory",
         IconName::MemoryStick,
         big_value(big, "%", theme.foreground, cx),
         cx,
     )
     .child(duty_bar(load.map(|l| l.round().clamp(0.0, 100.0) as u8), cx))
-    .child(detail("Utilisée", used_total, cx))
+    .child(detail("Used", used_total, cx))
 }
 
-/// Ligne « libellé discret … valeur ».
+/// "muted label ... value" line.
 fn detail(label: &'static str, value: String, cx: &App) -> impl IntoElement {
     h_flex()
         .justify_between()

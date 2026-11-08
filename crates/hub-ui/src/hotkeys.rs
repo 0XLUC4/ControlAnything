@@ -1,8 +1,8 @@
-//! Raccourcis globaux Ctrl+Shift+F1..F4 : activer le profil n° 1..4 (ordre de `config.profiles`).
+//! Global hotkeys Ctrl+Shift+F1..F4: activate profile no. 1..4 (order of `config.profiles`).
 //!
-//! Wayland n'autorise pas les raccourcis globaux : global-hotkey ne gère que X11 sous Linux,
-//! un échec d'enregistrement est simplement signalé dans les logs.
-//! Pas de Ctrl+Alt : sous Windows AltGr = Ctrl+Alt, ça volerait ~ # { sur AZERTY.
+//! Wayland does not allow global hotkeys: global-hotkey only handles X11 on Linux,
+//! a registration failure is simply logged.
+//! No Ctrl+Alt: on Windows AltGr = Ctrl+Alt, it would steal ~ # { on AZERTY.
 
 use async_channel::Sender;
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
@@ -18,17 +18,17 @@ fn profile_hotkeys() -> [HotKey; 4] {
     KEYS.map(|key| HotKey::new(Some(MODIFIERS), key))
 }
 
-/// Libellé affiché à côté du profil n° `slot` (0..4), s'il a un raccourci.
+/// Label shown next to profile no. `slot` (0..4), if it has a hotkey.
 pub fn hotkey_label(slot: usize) -> Option<String> {
     (slot < KEYS.len()).then(|| format!("Ctrl+Shift+F{}", slot + 1))
 }
 
-/// Raccourci pressé → numéro de profil.
+/// Pressed hotkey → profile number.
 fn slot_of(hotkey_id: u32) -> Option<usize> {
     profile_hotkeys().iter().position(|h| h.id() == hotkey_id)
 }
 
-/// Nom du profil activé par le raccourci n° `slot`.
+/// Name of the profile activated by hotkey no. `slot`.
 pub fn profile_for_slot(config: &Config, slot: usize) -> Option<&str> {
     config.profiles.get(slot).map(|p| p.name.as_str())
 }
@@ -39,7 +39,7 @@ pub struct Hotkeys {
 }
 
 impl Hotkeys {
-    /// À appeler sur le thread UI (Windows : la fenêtre cachée du gestionnaire y reçoit WM_HOTKEY).
+    /// Must be called on the UI thread (Windows: the manager hidden window receives WM_HOTKEY there).
     pub fn new(commands: Sender<Command>) -> Result<Self, String> {
         let manager = GlobalHotKeyManager::new().map_err(|err| err.to_string())?;
         GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
@@ -55,7 +55,7 @@ impl Hotkeys {
         })
     }
 
-    /// Enregistre ou libère les raccourcis ; un raccourci déjà pris ailleurs est ignoré.
+    /// Registers or releases the hotkeys; a hotkey already taken elsewhere is ignored.
     pub fn set_enabled(&mut self, enabled: bool) {
         if enabled == self.registered {
             return;
@@ -67,7 +67,7 @@ impl Hotkeys {
                 self.manager.unregister(hotkey)
             };
             if let Err(err) = result {
-                tracing::warn!("raccourci global {hotkey} : {err}");
+                tracing::warn!("global hotkey {hotkey}: {err}");
             }
         }
         self.registered = enabled;
@@ -94,10 +94,10 @@ mod tests {
             fans: Default::default(),
         };
         let config = Config {
-            profiles: vec![profile("Silencieux"), profile("Jeu")],
+            profiles: vec![profile("Silent"), profile("Gaming")],
             ..Config::default()
         };
-        assert_eq!(profile_for_slot(&config, 1), Some("Jeu"));
+        assert_eq!(profile_for_slot(&config, 1), Some("Gaming"));
         assert_eq!(profile_for_slot(&config, 3), None);
     }
 }

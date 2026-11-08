@@ -1,11 +1,11 @@
-//! Notifications système : surchauffe (failsafe) et arrêt du daemon.
+//! System notifications: overheating (failsafe) and daemon shutdown.
 
 use std::time::{Duration, Instant};
 
-/// Silence du daemon au-delà duquel on prévient l'utilisateur.
+/// Daemon silence after which the user is warned.
 const DAEMON_LOST_AFTER: Duration = Duration::from_secs(10);
 
-/// Détecte les débuts d'épisode : une notification par épisode, pas à chaque message.
+/// Detects episode starts: one notification per episode, not one per message.
 #[derive(Default)]
 pub struct Alerts {
     failsafe: bool,
@@ -13,14 +13,14 @@ pub struct Alerts {
 }
 
 impl Alerts {
-    /// `true` au passage false → true du failsafe.
+    /// `true` when the failsafe goes from false to true.
     pub fn failsafe_rising(&mut self, failsafe: bool) -> bool {
         let rising = failsafe && !self.failsafe;
         self.failsafe = failsafe;
         rising
     }
 
-    /// `true` une seule fois quand le daemon, déjà vu, se tait depuis plus de 10 s.
+    /// `true` only once when the daemon, already seen, has been silent for more than 10 s.
     pub fn daemon_lost(&mut self, last_update: Option<Instant>, now: Instant) -> bool {
         let Some(at) = last_update else {
             return false;
@@ -32,7 +32,7 @@ impl Alerts {
     }
 }
 
-/// Affiche une notification système (thread dédié : D-Bus/WinRT peuvent bloquer).
+/// Shows a system notification (dedicated thread: D-Bus/WinRT may block).
 pub fn notify(summary: &'static str, body: &'static str) {
     std::thread::spawn(move || {
         let shown = notify_rust::Notification::new()
@@ -41,7 +41,7 @@ pub fn notify(summary: &'static str, body: &'static str) {
             .body(body)
             .show();
         if let Err(err) = shown {
-            tracing::warn!("notification impossible : {err}");
+            tracing::warn!("cannot show notification: {err}");
         }
     });
 }
@@ -69,7 +69,7 @@ mod tests {
         assert!(!alerts.daemon_lost(Some(start), later(5)));
         assert!(alerts.daemon_lost(Some(start), later(11)));
         assert!(!alerts.daemon_lost(Some(start), later(20)));
-        // Reconnexion puis nouvelle perte : nouvelle notification.
+        // Reconnection then a new loss: new notification.
         assert!(!alerts.daemon_lost(Some(later(30)), later(31)));
         assert!(alerts.daemon_lost(Some(later(30)), later(45)));
     }

@@ -1,5 +1,5 @@
-//! Backend Linux : lecture des capteurs via sysfs hwmon (`/sys/class/hwmon`).
-//! Pur std (pas de cfg Linux) pour que les tests tournent aussi sous Windows.
+//! Linux backend: reads sensors through sysfs hwmon (`/sys/class/hwmon`).
+//! Pure std (no Linux cfg) so the tests also run on Windows.
 
 use hub_core::{Device, HwError, Reading, SensorKind, SensorProvider};
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ pub use fans::HwmonFans;
 
 const HWMON_ROOT: &str = "/sys/class/hwmon";
 
-/// Un fichier d'entrée hwmon découvert au démarrage.
+/// An hwmon input file discovered at startup.
 #[derive(Debug)]
 struct Sensor {
     id: String,
@@ -19,23 +19,23 @@ struct Sensor {
     device: Device,
     kind: SensorKind,
     path: PathBuf,
-    /// Facteur vers l'unité de `kind` (m°C -> °C, µW -> W).
+    /// Factor to the unit of `kind` (m°C -> °C, µW -> W).
     scale: f32,
 }
 
-/// Fournisseur de capteurs basé sur hwmon.
+/// hwmon-based sensor provider.
 #[derive(Debug)]
 pub struct HwmonProvider {
     sensors: Vec<Sensor>,
 }
 
 impl HwmonProvider {
-    /// Scanne `/sys/class/hwmon`.
+    /// Scans `/sys/class/hwmon`.
     pub fn discover() -> Result<Self, HwError> {
         Self::discover_in(Path::new(HWMON_ROOT))
     }
 
-    /// Idem, à partir d'un répertoire arbitraire (utilisé par les tests).
+    /// Same, from an arbitrary directory (used by tests).
     pub fn discover_in(root: &Path) -> Result<Self, HwError> {
         let mut sensors = Vec::new();
         for (dir, name, chip) in list_chips(root)? {
@@ -45,12 +45,12 @@ impl HwmonProvider {
     }
 }
 
-/// Liste les chips hwmon : (dossier, nom brut, id unique suffixé `#N` si doublon).
-/// Partagé avec `HwmonFans` pour que les ids de canaux collent aux ids de capteurs.
+/// Lists hwmon chips: (directory, raw name, unique id suffixed `#N` on duplicates).
+/// Shared with `HwmonFans` so channel ids match sensor ids.
 fn list_chips(root: &Path) -> Result<Vec<(PathBuf, String, String)>, HwError> {
     if !root.is_dir() {
         return Err(HwError::Unavailable(format!(
-            "{} introuvable",
+            "{} not found",
             root.display()
         )));
     }
@@ -58,7 +58,7 @@ fn list_chips(root: &Path) -> Result<Vec<(PathBuf, String, String)>, HwError> {
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .filter(|path| path.is_dir())
         .collect();
-    // Tri naturel (hwmon2 avant hwmon10) pour un suffixage #N déterministe.
+    // Natural sort (hwmon2 before hwmon10) for deterministic #N suffixes.
     chip_dirs.sort_by_key(|path| (path.as_os_str().len(), path.clone()));
 
     let mut seen: HashMap<String, usize> = HashMap::new();
@@ -85,7 +85,7 @@ impl SensorProvider for HwmonProvider {
     }
 
     fn poll(&mut self, out: &mut Vec<Reading>) -> Result<(), HwError> {
-        // Un fichier illisible (capteur débranché, driver déchargé) est simplement ignoré.
+        // An unreadable file (unplugged sensor, unloaded driver) is simply skipped.
         out.extend(self.sensors.iter().filter_map(|sensor| {
             read_value(&sensor.path).map(|raw| Reading {
                 id: sensor.id.clone(),
@@ -99,7 +99,7 @@ impl SensorProvider for HwmonProvider {
     }
 }
 
-/// Ajoute les entrées lisibles d'un chip hwmon.
+/// Adds the readable inputs of an hwmon chip.
 fn discover_chip(
     dir: &Path,
     name: &str,
@@ -116,7 +116,7 @@ fn discover_chip(
         let Some((stem, kind, scale)) = classify(file) else {
             continue;
         };
-        // power1_average prime sur power1_input quand les deux existent.
+        // power1_average wins over power1_input when both exist.
         if file == "power1_input" && has_power_average {
             continue;
         }
@@ -138,7 +138,7 @@ fn discover_chip(
     Ok(())
 }
 
-/// Reconnaît un fichier d'entrée : renvoie (radical, nature, facteur d'échelle).
+/// Recognizes an input file: returns (stem, kind, scale factor).
 fn classify(file: &str) -> Option<(&str, SensorKind, f32)> {
     if file == "power1_average" || file == "power1_input" {
         return Some(("power1", SensorKind::Power, 1e-6));
@@ -153,7 +153,7 @@ fn classify(file: &str) -> Option<(&str, SensorKind, f32)> {
     numbered.then_some((stem, kind, scale))
 }
 
-/// Associe un nom de chip hwmon à un composant.
+/// Maps an hwmon chip name to a component.
 fn device_for(name: &str) -> Device {
     match name {
         "coretemp" | "k10temp" | "zenpower" => Device::Cpu,
@@ -177,7 +177,7 @@ fn read_value(path: &Path) -> Option<f32> {
 mod tests {
     use super::*;
 
-    /// Faux arbre sysfs dans le dossier temporaire, supprimé au drop.
+    /// Fake sysfs tree in the temp directory, removed on drop.
     struct FakeSysfs(PathBuf);
 
     impl FakeSysfs {
@@ -214,7 +214,7 @@ mod tests {
         readings
             .iter()
             .find(|r| r.id == id)
-            .unwrap_or_else(|| panic!("{id} absent: {readings:?}"))
+            .unwrap_or_else(|| panic!("{id} missing: {readings:?}"))
     }
 
     #[test]
@@ -290,7 +290,7 @@ mod tests {
             .file("hwmon0/temp2_input", "garbage")
             .file("hwmon0/temp3_input", "60000");
         let mut provider = HwmonProvider::discover_in(&sysfs.0).expect("discover");
-        // Fichier disparu après la découverte : ignoré au poll, sans erreur.
+        // File gone after discovery: skipped at poll, no error.
         fs::remove_file(sysfs.0.join("hwmon0/temp3_input")).expect("remove");
         let mut out = Vec::new();
         provider.poll(&mut out).expect("poll");

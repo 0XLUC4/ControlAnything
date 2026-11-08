@@ -1,20 +1,20 @@
-# ControlAnything — profils pour MSI Z790 Gaming Plus WiFi + i9-14900K + AIO + RTX 5080
-# Import : Paramètres → Importer. Remplace toute la config (profils + noms des ventilos).
+# ControlAnything: profiles for MSI Z790 Gaming Plus WiFi + i9-14900K + AIO + RTX 5080
+# Import: Settings > Import. Replaces the whole config (profiles + fan names).
 #
-# Anti « monte à fond puis redescend » :
-# - le radiateur et la pompe suivent le CPU seul, les ventilos boîtier suivent max(CPU, GPU) ;
-# - même courbe + lissage que les boutons Préréglages de l'éditeur ;
-# - hystérésis 4-6 °C : les pics brefs du 14900K sont ignorés ;
-# - temps de réponse 2-3 s + petits pas de montée : rampe douce au lieu de sauts ;
-# - failsafe CPU 98 °C (TjMax 100 °C) : un 14900K dépasse 90 °C en charge normale.
-# En-têtes vides (SYS_FAN2/4/5/6) et ventilos GPU : non listés = Auto (BIOS / pilote NVIDIA, zéro RPM au repos).
+# Avoiding "ramps to full speed then drops back":
+# - the radiator and the pump follow the CPU only, case fans follow max(CPU, GPU);
+# - same curve + smoothing as the editor's Presets buttons;
+# - 4-6 °C hysteresis: short 14900K spikes are ignored;
+# - 2-3 s response time + small step-up: smooth ramp instead of jumps;
+# - CPU failsafe 98 °C (TjMax 100 °C): a 14900K goes above 90 °C under normal load.
+# Empty headers (SYS_FAN2/4/5/6) and GPU fans: not listed = Auto (BIOS / NVIDIA driver, zero RPM at idle).
 
 poll_interval_ms = 1000
-active_profile = "Silencieux"
+active_profile = "Silent"
 
 [fan_labels]
-"nct6687/pwm1" = "Radiateur AIO (CPU_FAN)"
-"nct6687/pwm2" = "Pompe AIO"
+"nct6687/pwm1" = "AIO radiator (CPU_FAN)"
+"nct6687/pwm2" = "AIO pump"
 "nct6687/pwm3" = "Antec (SYS_FAN1)"
 "nct6687/pwm5" = "Antec (SYS_FAN3)"
 
@@ -22,9 +22,9 @@ active_profile = "Silencieux"
 cpu_critical = 98.0
 gpu_critical = 85.0
 
-# ───────────── Silencieux : bureautique, jeu léger ─────────────
+# ------------- Silent: office work, light gaming -------------
 [[profiles]]
-name = "Silencieux"
+name = "Silent"
 
 [profiles.fans."nct6687/pwm1"]
 min_duty = 25
@@ -40,7 +40,7 @@ mode = { mode = "curve", source = { type = "sensor", id = "cpu/package_temp" }, 
     { temp = 95.0, duty = 100 },
 ] }
 
-# Pompe : vitesse fixe = bruit constant ; 60 % = plancher de sécurité du daemon (FanControl : 40-50 % au repos).
+# Pump: fixed speed = constant noise; 60 % = daemon safety floor (FanControl: 40-50 % at idle).
 [profiles.fans."nct6687/pwm2"]
 mode = { mode = "fixed", duty = 60 }
 
@@ -72,9 +72,9 @@ mode = { mode = "curve", source = { type = "max", ids = ["cpu/package_temp", "gp
     { temp = 95.0, duty = 100 },
 ] }
 
-# ───────────── Équilibré : jeu ─────────────
+# ------------- Balanced: gaming -------------
 [[profiles]]
-name = "Équilibré"
+name = "Balanced"
 
 [profiles.fans."nct6687/pwm1"]
 min_duty = 30
@@ -121,7 +121,7 @@ mode = { mode = "curve", source = { type = "max", ids = ["cpu/package_temp", "gp
     { temp = 92.0, duty = 100 },
 ] }
 
-# ───────────── Performance : rendu, benchmark ─────────────
+# ------------- Performance: rendering, benchmarks -------------
 [[profiles]]
 name = "Performance"
 
@@ -167,6 +167,6 @@ mode = { mode = "curve", source = { type = "max", ids = ["cpu/package_temp", "gp
     { temp = 85.0, duty = 100 },
 ] }
 
-# ───────────── Custom : vide = tout en Auto (BIOS), à toi de jouer ─────────────
+# ------------- Custom: empty = everything in Auto (BIOS), your call -------------
 [[profiles]]
 name = "Custom"

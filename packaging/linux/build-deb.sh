@@ -28,10 +28,10 @@ Section: utils
 Priority: optional
 Depends: systemd
 Recommends: lm-sensors
-Description: ControlAnything - capteurs, ventilateurs et RGB du PC
- Daemon systemd (root) controlanythingd + interface graphique controlanything.
+Description: ControlAnything - PC sensors, fans and RGB
+ systemd daemon (root) controlanythingd + graphical interface controlanything.
 CONTROL
 
 out="target/packager/controlanything_${version}_${arch}.deb"
 dpkg-deb --root-owner-group --build "$root" "$out"
-echo "Paquet : $out"
+echo "Package: $out"

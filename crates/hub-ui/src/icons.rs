@@ -1,11 +1,11 @@
-//! Assets de l'application : icônes Lucide utilisées par ControlAnything + icônes par défaut de gpui-kit.
+//! Application assets: Lucide icons used by ControlAnything + gpui-kit default icons.
 
 use std::borrow::Cow;
 
 use gpui_kit::assets::{Assets, icon_assets};
 use gpui_kit::{AssetSource, Result, SharedString};
 
-// `Assets` n'embarque que les icônes des composants : on ajoute uniquement celles qu'on affiche.
+// `Assets` only embeds the component icons: add just the ones we display.
 icon_assets!(
     ExtraIcons,
     [
@@ -35,7 +35,7 @@ icon_assets!(
     ]
 );
 
-/// Logo de l'application (hélice), servi aux éléments `img`.
+/// Application logo (propeller), served to `img` elements.
 pub const BRAND_ICON: &str = "brand/fan.png";
 
 pub struct HubAssets;

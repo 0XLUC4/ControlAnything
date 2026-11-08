@@ -1,4 +1,4 @@
-//! Intègre l'icône ControlAnything dans `controlanything.exe` (Windows) ; sans effet ailleurs.
+//! Embeds the ControlAnything icon into `controlanything.exe` (Windows); no effect elsewhere.
 
 fn main() {
     let icon = concat!(
@@ -9,11 +9,11 @@ fn main() {
     #[cfg(windows)]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut resource = winresource::WindowsResource::new();
-        // Id 1 : icône de l'exe, et celle que GPUI charge pour la fenêtre et la barre des tâches.
+        // Id 1: the exe icon, also the one GPUI loads for the window and the taskbar.
         resource.set_icon(icon);
         if let Err(err) = resource.compile() {
-            // Sans outil de ressources (rc.exe) : exe sans icône plutôt qu'un build en échec.
-            println!("cargo:warning=icône de l'exécutable non intégrée : {err}");
+            // Without a resource tool (rc.exe): an exe without icon rather than a failed build.
+            println!("cargo:warning=executable icon not embedded: {err}");
         }
     }
     #[cfg(not(windows))]

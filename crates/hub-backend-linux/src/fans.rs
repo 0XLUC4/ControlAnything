@@ -1,4 +1,4 @@
-//! Pilotage des ventilos via sysfs hwmon (`pwmN` + `pwmN_enable`).
+//! Fan control through sysfs hwmon (`pwmN` + `pwmN_enable`).
 
 use crate::{HWMON_ROOT, list_chips, read_trimmed};
 use hub_core::HwError;
@@ -7,30 +7,30 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Sortie PWM découverte, avec l'état d'origine sauvegardé au premier contact.
+/// Discovered PWM output, with the original state saved on first touch.
 #[derive(Debug)]
 struct Pwm {
     pwm: PathBuf,
     enable: PathBuf,
-    /// (enable, pwm) d'origine ; `None` tant que le canal n'a pas été touché.
+    /// Original (enable, pwm); `None` until the channel is touched.
     saved: Option<(String, String)>,
 }
 
-/// Contrôleur de ventilos basé sur hwmon. Rend la main au firmware au drop.
+/// hwmon-based fan controller. Hands control back to the firmware on drop.
 #[derive(Debug)]
 pub struct HwmonFans {
     channels: Vec<FanChannel>,
-    /// Parallèle à `channels` (même index).
+    /// Parallel to `channels` (same index).
     pwms: Vec<Pwm>,
 }
 
 impl HwmonFans {
-    /// Scanne `/sys/class/hwmon`.
+    /// Scans `/sys/class/hwmon`.
     pub fn discover() -> Result<Self, HwError> {
         Self::discover_in(Path::new(HWMON_ROOT))
     }
 
-    /// Idem, à partir d'un répertoire arbitraire (utilisé par les tests).
+    /// Same, from an arbitrary directory (used by tests).
     pub fn discover_in(root: &Path) -> Result<Self, HwError> {
         let mut fans = Self {
             channels: Vec::new(),
@@ -70,7 +70,7 @@ impl HwmonFans {
             .channels
             .iter()
             .position(|c| c.id == channel)
-            .ok_or_else(|| HwError::Other(format!("canal inconnu : {channel}")))?;
+            .ok_or_else(|| HwError::Other(format!("unknown channel: {channel}")))?;
         Ok(&mut self.pwms[index])
     }
 }
@@ -102,7 +102,7 @@ impl FanController for HwmonFans {
             return Ok(());
         };
         write(&pwm.enable, &enable)?;
-        // Canal déjà manuel à l'origine : on remet aussi sa valeur PWM.
+        // Channel was originally manual: restore its PWM value too.
         if enable == "1" {
             write(&pwm.pwm, &duty)?;
         }
@@ -141,7 +141,7 @@ fn write(path: &Path, value: &str) -> Result<(), HwError> {
 
 fn io_error(path: &Path, err: io::Error) -> HwError {
     if err.kind() == io::ErrorKind::PermissionDenied {
-        HwError::PermissionDenied(format!("{} (root ou règle udev requis)", path.display()))
+        HwError::PermissionDenied(format!("{} (root or udev rule required)", path.display()))
     } else {
         HwError::Io(err)
     }
@@ -151,7 +151,7 @@ fn io_error(path: &Path, err: io::Error) -> HwError {
 mod tests {
     use super::*;
 
-    /// Faux arbre sysfs : un chip nct6687 (pwm1 auto + fan1, pwm2 manuel) et un amdgpu.
+    /// Fake sysfs tree: an nct6687 chip (pwm1 auto + fan1, pwm2 manual) and an amdgpu.
     struct FakeSysfs(PathBuf);
 
     impl FakeSysfs {
@@ -165,7 +165,7 @@ mod tests {
                 ("hwmon0/fan1_input", "1200\n"),
                 ("hwmon0/pwm2", "40\n"),
                 ("hwmon0/pwm2_enable", "1\n"),
-                ("hwmon0/pwm3", "0\n"), // sans _enable : ignoré
+                ("hwmon0/pwm3", "0\n"), // no _enable: ignored
                 ("hwmon1/name", "amdgpu\n"),
                 ("hwmon1/pwm1", "60\n"),
                 ("hwmon1/pwm1_enable", "2\n"),
@@ -236,13 +236,13 @@ mod tests {
         let sysfs = FakeSysfs::new("auto");
         let mut fans = sysfs.fans();
         fans.set_auto("nct6687/pwm1")
-            .expect("no-op si jamais touché");
+            .expect("no-op if never touched");
         fans.set_duty("nct6687/pwm1", 100).expect("duty");
         fans.set_duty("nct6687/pwm2", 100).expect("duty");
         fans.set_auto("nct6687/pwm1").expect("auto");
         fans.set_auto("nct6687/pwm2").expect("auto");
         assert_eq!(sysfs.get("hwmon0/pwm1_enable"), "2");
-        // Canal manuel à l'origine : sa valeur PWM revient aussi.
+        // Originally manual channel: its PWM value comes back too.
         assert_eq!(sysfs.get("hwmon0/pwm2_enable"), "1");
         assert_eq!(sysfs.get("hwmon0/pwm2"), "40");
     }

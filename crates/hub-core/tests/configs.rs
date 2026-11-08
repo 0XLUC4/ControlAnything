@@ -1,21 +1,21 @@
-//! Les configs livrées dans `configs/` doivent rester importables.
+//! The configs shipped in `configs/` must stay importable.
 
 use hub_core::config::{Config, FanMode, Preset};
 
-/// Profil « Silencieux » = boutons « Silencieux » de l'éditeur, appliqués à chaque ventilo.
+/// "Silent" profile = the editor's "Silent" preset buttons, applied to each fan.
 #[test]
 fn shipped_curves_match_presets() {
-    let text = include_str!("../../../configs/controlanything-profils.toml");
-    let config = Config::from_toml(text).expect("config livrée invalide");
+    let text = include_str!("../../../configs/controlanything-profiles.toml");
+    let config = Config::from_toml(text).expect("invalid shipped config");
     for (name, preset) in [
-        ("Silencieux", Preset::Silent),
-        ("Équilibré", Preset::Balanced),
+        ("Silent", Preset::Silent),
+        ("Balanced", Preset::Balanced),
         ("Performance", Preset::Performance),
     ] {
         let profile = config.profiles.iter().find(|p| p.name == name).expect(name);
         for (id, fan) in &profile.fans {
             if matches!(fan.mode, FanMode::Curve { .. }) {
-                assert!(preset.matches(fan), "{name} / {id} ≠ préréglage");
+                assert!(preset.matches(fan), "{name} / {id} does not match the preset");
             }
         }
     }
@@ -23,12 +23,12 @@ fn shipped_curves_match_presets() {
 
 #[test]
 fn shipped_profiles_parse_and_validate() {
-    let text = include_str!("../../../configs/controlanything-profils.toml");
-    let config = Config::from_toml(text).expect("config livrée invalide");
-    assert_eq!(config.active_profile, "Silencieux");
+    let text = include_str!("../../../configs/controlanything-profiles.toml");
+    let config = Config::from_toml(text).expect("invalid shipped config");
+    assert_eq!(config.active_profile, "Silent");
     assert_eq!(config.profiles.len(), 4);
     assert_eq!(config.failsafe.cpu_critical, 98.0);
-    let silent = config.active().expect("profil actif");
+    let silent = config.active().expect("active profile");
     assert!(matches!(
         silent.fans["nct6687/pwm2"].mode,
         FanMode::Fixed { duty: 60 }

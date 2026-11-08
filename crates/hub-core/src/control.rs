@@ -1,14 +1,14 @@
-//! Moteur de régulation : courbes, hystérésis, lissage, failsafe. Pur et testable.
+//! Control engine: curves, hysteresis, smoothing, failsafe. Pure and testable.
 
 use std::time::{Duration, Instant};
 
 use crate::config::{CurvePoint, FailsafeConfig, FanMode, FanSettings, TempSource};
 use crate::{Device, Reading, SensorKind};
 
-/// Interpolation linéaire de la courbe ; bornée par le premier et le dernier point.
-/// Courbe vide → 100 % (sécurité).
+/// Linear interpolation of the curve, clamped by the first and last points.
+/// Empty curve gives 100 % (safety).
 pub fn evaluate_curve(points: &[CurvePoint], temp: f32) -> u8 {
-    // Courbe vide ou température NaN → 100 % par sécurité.
+    // Empty curve or NaN temperature: 100 % for safety.
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return 100;
     };
@@ -20,7 +20,7 @@ pub fn evaluate_curve(points: &[CurvePoint], temp: f32) -> u8 {
     } else if temp >= last.temp {
         f32::from(last.duty)
     } else {
-        // Premier segment [a, b] qui contient temp (existe : first.temp < temp < last.temp).
+        // First segment [a, b] containing temp (exists: first.temp < temp < last.temp).
         points
             .windows(2)
             .find(|w| temp <= w[1].temp)
@@ -33,7 +33,7 @@ pub fn evaluate_curve(points: &[CurvePoint], temp: f32) -> u8 {
     duty.round().clamp(0.0, 100.0) as u8
 }
 
-/// Température de la source à partir des mesures ; `None` si un capteur requis manque.
+/// Source temperature from the readings; `None` if a required sensor is missing.
 pub fn resolve_source(source: &TempSource, readings: &[Reading]) -> Option<f32> {
     let value = |id: &String| {
         readings
@@ -58,14 +58,14 @@ pub fn resolve_source(source: &TempSource, readings: &[Reading]) -> Option<f32> 
     }
 }
 
-/// État de régulation d'un ventilo entre deux ticks.
+/// Control state of a fan between two ticks.
 #[derive(Debug, Default)]
 pub struct FanControl {
-    /// Température retenue par l'hystérésis.
+    /// Temperature retained by the hysteresis.
     retained_temp: Option<f32>,
-    /// Dernière consigne émise.
+    /// Last emitted target.
     last_duty: Option<u8>,
-    /// Instant du dernier changement de consigne.
+    /// Time of the last target change.
     last_change: Option<Instant>,
 }
 
@@ -74,9 +74,9 @@ impl FanControl {
         Self::default()
     }
 
-    /// Consigne à appliquer. `temp` = température de la source (`None` = capteur perdu).
-    /// Retourne `None` pour rendre le canal au firmware (mode Auto ou capteur perdu).
-    /// Applique : mode Fixed/Curve, hystérésis, step up/down, temps de réponse, plancher, zéro RPM.
+    /// Target to apply. `temp` = source temperature (`None` = sensor lost).
+    /// Returns `None` to hand the channel back to the firmware (Auto mode or sensor lost).
+    /// Applies: Fixed/Curve mode, hysteresis, step up/down, response time, floor, zero RPM.
     pub fn update(
         &mut self,
         settings: &FanSettings,
@@ -96,7 +96,7 @@ impl FanControl {
             }
             FanMode::Curve { points, .. } => points,
         };
-        // Capteur perdu (ou NaN) : on rend la main au firmware et on repart de zéro.
+        // Sensor lost (or NaN): hand control back to the firmware and start over.
         let Some(temp) = temp.filter(|t| t.is_finite()) else {
             *self = Self::default();
             return None;
@@ -133,7 +133,7 @@ impl FanControl {
         Some(duty)
     }
 
-    /// Mémorise la consigne ; l'horloge du temps de réponse ne repart que si elle change.
+    /// Stores the target; the response-time clock restarts only if it changes.
     fn set_duty(&mut self, duty: u8, now: Instant) {
         if self.last_duty != Some(duty) {
             self.last_duty = Some(duty);
@@ -142,7 +142,7 @@ impl FanControl {
     }
 }
 
-/// Avance de `from` vers `to` d'au plus `step` (0 = illimité).
+/// Moves from `from` toward `to` by at most `step` (0 = unlimited).
 fn step_toward(from: u8, to: u8, step: u8) -> u8 {
     if step == 0 {
         to
@@ -153,16 +153,16 @@ fn step_toward(from: u8, to: u8, step: u8) -> u8 {
     }
 }
 
-/// Détecteur de surchauffe avec hystérésis de sortie (5 °C sous le seuil).
+/// Overheat detector with exit hysteresis (5 °C below the threshold).
 #[derive(Debug, Default)]
 pub struct Failsafe {
     active: bool,
 }
 
 impl Failsafe {
-    /// Vrai tant qu'une température CPU/GPU est critique : tous les ventilos pilotés à 100 %.
+    /// True while a CPU/GPU temperature is critical: every controlled fan at 100 %.
     pub fn update(&mut self, cfg: &FailsafeConfig, readings: &[Reading]) -> bool {
-        // (température, seuil critique) des capteurs surveillés.
+        // (temperature, critical threshold) of the watched sensors.
         let mut watched = readings
             .iter()
             .filter(|r| r.kind == SensorKind::Temperature)
@@ -172,7 +172,7 @@ impl Failsafe {
                 _ => None,
             });
         self.active = if self.active {
-            // NaN ne valide pas la sortie : on reste en sécurité.
+            // NaN does not allow exiting: stay in safe mode.
             !watched.all(|(v, crit)| v < crit - 5.0)
         } else {
             watched.any(|(v, crit)| v >= crit)
@@ -205,7 +205,7 @@ mod tests {
         reading(id, Device::Cpu, SensorKind::Temperature, value)
     }
 
-    /// Courbe 30 °C → 20 %, 70 °C → 100 %, sans lissage : chaque test active ce qu'il teste.
+    /// Curve 30 °C to 20 %, 70 °C to 100 %, no smoothing: each test enables what it tests.
     fn curve(min_duty: u8) -> FanSettings {
         FanSettings {
             mode: FanMode::Curve {
@@ -239,8 +239,8 @@ mod tests {
         assert_eq!(evaluate_curve(&pts(&[(50.0, 42)]), 10.0), 42);
         assert_eq!(evaluate_curve(&pts(&[(50.0, 42)]), 90.0), 42);
         let p = pts(&[(0.0, 0), (3.0, 10)]);
-        assert_eq!(evaluate_curve(&p, 1.0), 3); // 3,33
-        assert_eq!(evaluate_curve(&p, 2.0), 7); // 6,67
+        assert_eq!(evaluate_curve(&p, 1.0), 3); // 3.33
+        assert_eq!(evaluate_curve(&p, 2.0), 7); // 6.67
         assert_eq!(evaluate_curve(&p, f32::NAN), 100);
     }
 
@@ -350,7 +350,7 @@ mod tests {
         let mut s = curve(0);
         s.step_up = 10;
         s.step_down = 5;
-        // Première consigne : saut direct.
+        // First target: direct jump.
         assert_eq!(fc.update(&s, Some(30.0), now), Some(20));
         assert_eq!(fc.update(&s, Some(70.0), now), Some(30));
         assert_eq!(fc.update(&s, Some(70.0), now), Some(40));
@@ -403,12 +403,12 @@ mod tests {
         s.zero_rpm_below = Some(40.0);
         assert_eq!(fc.update(&s, Some(35.0), now), Some(0));
         assert_eq!(fc.update(&s, Some(50.0), now), Some(60));
-        // Retour à 0 limité par step_down.
+        // Return to 0 limited by step_down.
         s.step_down = 20;
         assert_eq!(fc.update(&s, Some(35.0), now), Some(40));
         assert_eq!(fc.update(&s, Some(35.0), now), Some(20));
         assert_eq!(fc.update(&s, Some(35.0), now), Some(0));
-        // Reprise au-dessus du seuil : courbe (40 %) et plancher respectés.
+        // Resume above the threshold: curve (40 %) and floor respected.
         assert_eq!(fc.update(&s, Some(40.0), now), Some(40));
         assert_eq!(fc.update(&s, Some(35.0), now), Some(20));
         s.zero_rpm_below = None;

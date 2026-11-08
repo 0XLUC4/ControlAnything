@@ -17,6 +17,6 @@ notify-rust = "4.18"
 directories = "6"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-# tray-icon (backend libappindicator) s'appuie sur GTK 3 : même version que la sienne.
+# tray-icon (libappindicator backend) relies on GTK 3: same version as its own.
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

@@ -1,4 +1,4 @@
-//! Page « Tableau de bord » : cartes, historique des températures et autres mesures.
+//! "Dashboard" page: cards, temperature history and other readings.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -14,12 +14,12 @@ use crate::state::{HubState, channel_rpm, display_name};
 use crate::widgets::{self, card_header, duty_bar, hex, muted};
 use crate::{cards, chart};
 
-/// Points d'historique conservés par capteur (2 min à 1 Hz).
+/// History points kept per sensor (2 min at 1 Hz).
 pub const HISTORY_LEN: usize = 120;
 
 #[derive(Default)]
 pub struct Dashboard {
-    /// Historique des températures et charges, par `Reading::id`.
+    /// Temperature and load history, by `Reading::id`.
     history: HashMap<String, VecDeque<f32>>,
 }
 
@@ -67,8 +67,8 @@ impl Dashboard {
     }
 }
 
-/// Carte « Ventilateurs » : canaux branchés, vitesse et consigne.
-/// Renvoie aussi les ids des capteurs RPM affichés.
+/// "Fans" card: connected channels, speed and target.
+/// Also returns the ids of the RPM sensors shown.
 fn fans_card(state: &HubState, cx: &App) -> (AnyElement, Vec<String>) {
     let theme = cx.theme();
     let connected: Vec<_> = state
@@ -83,13 +83,13 @@ fn fans_card(state: &HubState, cx: &App) -> (AnyElement, Vec<String>) {
     let mut card = widgets::card(cx)
         .flex_1()
         .min_w_0()
-        .child(card_header(IconName::Fan, "Ventilateurs", cx));
+        .child(card_header(IconName::Fan, "Fans", cx));
     if connected.is_empty() {
-        card = card.child(muted("Aucun ventilateur branché détecté.", cx));
+        card = card.child(muted("No connected fan detected.", cx));
     }
     for channel in connected {
         let rpm = channel_rpm(channel, state.readings())
-            .map_or("— RPM".into(), |rpm| format!("{rpm:.0} RPM"));
+            .map_or("- RPM".into(), |rpm| format!("{rpm:.0} RPM"));
         let duty = state.applied_duty(&channel.id).flatten();
         let mode = duty.map_or("Auto (BIOS)".into(), |d| format!("{d} %"));
         card = card.child(
@@ -127,15 +127,15 @@ fn fans_card(state: &HubState, cx: &App) -> (AnyElement, Vec<String>) {
     (card.into_any_element(), shown)
 }
 
-/// Carte « Carte mère » : sondes de température de la carte (socket, VRM, chipset, M.2…).
+/// "Motherboard" card: board temperature probes (socket, VRM, chipset, M.2...).
 fn board_card(temps: &[&Reading], unit: TempUnit, cx: &App) -> impl IntoElement {
     let mut card = widgets::card(cx)
         .flex_1()
         .min_w_0()
-        .child(card_header(IconName::CircuitBoard, "Carte mère", cx));
+        .child(card_header(IconName::CircuitBoard, "Motherboard", cx));
     if temps.is_empty() {
         card = card.child(muted(
-            "Sondes indisponibles : le service doit tourner en administrateur.",
+            "Probes unavailable: the service must run as administrator.",
             cx,
         ));
     }
@@ -159,7 +159,7 @@ fn board_card(temps: &[&Reading], unit: TempUnit, cx: &App) -> impl IntoElement 
     })))
 }
 
-/// Bandeau d'aide affiché quand le daemon ne répond pas.
+/// Help banner shown when the daemon does not respond.
 fn disconnected_hint(cx: &App) -> impl IntoElement {
     div()
         .p_3()
@@ -167,10 +167,10 @@ fn disconnected_hint(cx: &App) -> impl IntoElement {
         .bg(cx.theme().warning.opacity(0.15))
         .text_sm()
         .text_color(cx.theme().warning)
-        .child("Service ControlAnything injoignable : lancez controlanythingd (en administrateur pour la température CPU et les ventilateurs carte mère).")
+        .child("ControlAnything service unreachable: start controlanythingd (as administrator for CPU temperature and motherboard fans).")
 }
 
-/// Carte des autres mesures, groupées par composant ; `None` s'il n'en reste aucune.
+/// Card of the other readings, grouped by component; `None` if none are left.
 fn other_readings(
     readings: &[Reading],
     shown_ids: &[String],
@@ -179,13 +179,13 @@ fn other_readings(
 ) -> Option<AnyElement> {
     let theme = cx.theme();
     let groups = [
-        (Device::Cpu, "Processeur"),
-        (Device::Gpu, "Carte graphique"),
-        (Device::Motherboard, "Carte mère"),
-        (Device::Memory, "Mémoire"),
-        (Device::Storage, "Stockage"),
+        (Device::Cpu, "Processor"),
+        (Device::Gpu, "Graphics card"),
+        (Device::Motherboard, "Motherboard"),
+        (Device::Memory, "Memory"),
+        (Device::Storage, "Storage"),
     ];
-    let mut table = widgets::card(cx).child(card_header(IconName::Gauge, "Autres capteurs", cx));
+    let mut table = widgets::card(cx).child(card_header(IconName::Gauge, "Other sensors", cx));
     let mut any = false;
     for (device, title) in groups {
         let rows: Vec<&Reading> = readings
@@ -221,18 +221,18 @@ fn other_readings(
     any.then(|| table.into_any_element())
 }
 
-/// Valeur formatée avec son unité, « — » si le capteur est absent.
-/// Les températures (reçues en °C) sont affichées dans l'unité choisie.
+/// Value formatted with its unit, "-" if the sensor is missing.
+/// Temperatures (received in °C) are shown in the chosen unit.
 pub fn format_value(value: Option<f32>, kind: SensorKind, unit: TempUnit) -> String {
     match value {
-        None => "—".into(),
+        None => "-".into(),
         Some(v) if kind == SensorKind::Temperature => unit.format(v, 1),
         Some(v) if kind == SensorKind::Power => format!("{v:.1} {}", kind.unit()),
         Some(v) => format!("{v:.0} {}", kind.unit()),
     }
 }
 
-/// Ajoute une valeur en gardant au plus `cap` points (les plus récents).
+/// Appends a value keeping at most `cap` points (the most recent ones).
 pub fn push_capped(series: &mut VecDeque<f32>, value: f32, cap: usize) {
     series.push_back(value);
     while series.len() > cap {
@@ -244,7 +244,7 @@ pub fn find<'a>(readings: &'a [Reading], id: &str) -> Option<&'a Reading> {
     readings.iter().find(|r| r.id == id)
 }
 
-/// Premier capteur d'un composant et d'un type donnés (les ids varient selon l'OS).
+/// First sensor of a given component and kind (ids vary by OS).
 pub fn find_kind(readings: &[Reading], device: Device, kind: SensorKind) -> Option<&Reading> {
     readings
         .iter()
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn missing_value_shows_dash() {
         let c = TempUnit::Celsius;
-        assert_eq!(format_value(None, SensorKind::Temperature, c), "—");
+        assert_eq!(format_value(None, SensorKind::Temperature, c), "-");
         assert_eq!(
             format_value(Some(51.24), SensorKind::Temperature, c),
             "51.2 °C"

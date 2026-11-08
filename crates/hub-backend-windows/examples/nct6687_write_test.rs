@@ -1,6 +1,6 @@
-//! Premier test d'écriture, limité à System Fan 1 (jamais la pompe ni le CPU) :
-//! 100 % pendant 6 s, 40 % pendant 6 s, puis retour au BIOS et 8 s d'observation.
-//! Usage (console admin) : nct6687_write_test.exe assets\pawnio\LpcIO.bin
+//! First write test, limited to System Fan 1 (never the pump or the CPU):
+//! 100 % for 6 s, 40 % for 6 s, then back to BIOS and 8 s of observation.
+//! Usage (admin console): nct6687_write_test.exe assets\pawnio\LpcIO.bin
 
 #[cfg(windows)]
 fn main() -> Result<(), hub_core::HwError> {
@@ -32,7 +32,7 @@ fn main() -> Result<(), hub_core::HwError> {
     show("40 %", 6)?;
     fans.set_auto(CHANNEL)?;
     show("BIOS", 8)?;
-    // `fans` est relâché ici : Drop → restore_all (double sécurité).
+    // `fans` is dropped here: Drop -> restore_all (double safety).
     Ok(())
 }
 

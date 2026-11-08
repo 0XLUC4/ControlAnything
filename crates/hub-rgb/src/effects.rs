@@ -1,5 +1,5 @@
-//! Moteur d'effets : calcule l'image de chaque zone à partir de la config et des mesures.
-//! Fonctions pures, sans état : le daemon et l'aperçu de l'UI s'en servent tels quels.
+//! Effect engine: computes each zone's frame from the config and the readings.
+//! Pure, stateless functions: the daemon and the UI preview use them as-is.
 
 use std::f32::consts::TAU;
 use std::time::Duration;
@@ -10,7 +10,7 @@ use hub_core::rgb::{Effect, Rgb, RgbConfig};
 
 static FIRMWARE: Effect = Effect::Firmware;
 
-/// Effet effectif d'une zone : `sync` s'il est défini, sinon `zones["{device}/{zone}"]`, sinon Firmware.
+/// Effective effect of a zone: `sync` if set, else `zones["{device}/{zone}"]`, else Firmware.
 pub fn effect_for<'a>(cfg: &'a RgbConfig, device_id: &str, zone_id: &str) -> &'a Effect {
     cfg.sync
         .as_ref()
@@ -18,11 +18,11 @@ pub fn effect_for<'a>(cfg: &'a RgbConfig, device_id: &str, zone_id: &str) -> &'a
         .unwrap_or(&FIRMWARE)
 }
 
-/// Image d'une zone de `leds` LEDs à l'instant `elapsed` (depuis le démarrage du moteur).
-/// `None` pour `Effect::Firmware` (ne rien écrire). Luminosité 0..=100 appliquée.
+/// Frame of a zone of `leds` LEDs at time `elapsed` (since engine start).
+/// `None` for `Effect::Firmware` (write nothing). Brightness 0..=100 applied.
 ///
-/// Capteur de température absent : on affiche `hot`, par prudence (mieux vaut une fausse
-/// alerte visible qu'un faux « tout va bien »). Capteur de charge absent : `low`.
+/// Missing temperature sensor: show `hot`, to be safe (a visible false alarm beats a
+/// false "all good"). Missing load sensor: `low`.
 pub fn render(
     effect: &Effect,
     leds: usize,
@@ -30,14 +30,14 @@ pub fn render(
     readings: &[Reading],
     brightness: u8,
 ) -> Option<Vec<Rgb>> {
-    // Position le long de la zone, 0..1 (0 pour une zone d'une seule LED).
+    // Position along the zone, 0..1 (0 for a single-LED zone).
     let pos = |i: usize| i as f32 / leds as f32;
     let colors: Vec<Rgb> = match effect {
         Effect::Firmware => return None,
         Effect::Off => vec![Rgb::BLACK; leds],
         Effect::Static { color } => vec![*color; leds],
         Effect::Breathing { color, period_ms } => {
-            // 0 à t=0, maximum à mi-période : sinusoïde lissée.
+            // 0 at t=0, maximum at half period: smoothed sine.
             let level = (1.0 - (TAU * phase(elapsed, *period_ms)).cos()) / 2.0;
             vec![scale(*color, level); leds]
         }
@@ -77,7 +77,7 @@ pub fn render(
     Some(colors.into_iter().map(|c| scale(c, level)).collect())
 }
 
-/// Avancement dans la période, 0..1. Période 0 → 1000 ms.
+/// Progress within the period, 0..1. Period 0 -> 1000 ms.
 fn phase(elapsed: Duration, period_ms: u32) -> f32 {
     let period = if period_ms == 0 {
         1000
@@ -87,7 +87,7 @@ fn phase(elapsed: Duration, period_ms: u32) -> f32 {
     (elapsed.as_millis() % period) as f32 / period as f32
 }
 
-/// Couleur à la position `pos` (0..1) d'un dégradé cyclique passant par `colors` (non vide).
+/// Color at position `pos` (0..1) of a cyclic gradient through `colors` (non-empty).
 fn gradient(colors: &[Rgb], pos: f32) -> Rgb {
     let x = pos * colors.len() as f32;
     let idx = (x as usize).min(colors.len() - 1);
@@ -98,19 +98,19 @@ fn gradient(colors: &[Rgb], pos: f32) -> Rgb {
     )
 }
 
-/// Interpolation linéaire ; `f` borné à 0..1 (NaN → `a`).
+/// Linear interpolation; `f` clamped to 0..1 (NaN -> `a`).
 fn lerp(a: Rgb, b: Rgb, f: f32) -> Rgb {
     let f = if f.is_nan() { 0.0 } else { f.clamp(0.0, 1.0) };
     let mix = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * f).round() as u8;
     Rgb::new(mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b))
 }
 
-/// Multiplie chaque canal par `level` (0..1).
+/// Multiplies each channel by `level` (0..1).
 fn scale(c: Rgb, level: f32) -> Rgb {
     lerp(Rgb::BLACK, c, level)
 }
 
-/// Teinte pleine saturation, pleine valeur ; `h` dans 0..1.
+/// Full-saturation, full-value hue; `h` in 0..1.
 fn hue(h: f32) -> Rgb {
     let x = h * 6.0;
     let up = ((x.fract()) * 255.0).round() as u8;
@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(one(&effect, ms(1000), &[]), Rgb::WHITE);
         assert_eq!(one(&effect, ms(500), &[]), Rgb::new(128, 128, 128));
         assert_eq!(one(&effect, ms(2000), &[]), Rgb::BLACK);
-        // Période 0 → 1000 ms.
+        // Period 0 -> 1000 ms.
         let zero = Effect::Breathing {
             color: Rgb::WHITE,
             period_ms: 0,
@@ -209,7 +209,7 @@ mod tests {
         assert_eq!(one(&effect, ms(800), &[]), BLUE);
         let frame = render(&effect, 3, ms(0), &[], 100).expect("image");
         assert_eq!(frame, vec![RED, Rgb::new(0, 255, 0), BLUE]);
-        // Décalé d'un tiers de période : chaque LED prend la teinte de sa voisine.
+        // Shifted by a third of a period: each LED takes its neighbour's hue.
         let later = render(&effect, 3, ms(400), &[], 100).expect("image");
         assert_eq!(later, vec![frame[1], frame[2], frame[0]]);
     }
@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(frame[2], BLUE);
         let later = render(&effect, 4, ms(250), &[], 100).expect("image");
         assert_eq!(later, vec![frame[1], frame[2], frame[3], frame[0]]);
-        // Couleurs vides (config non validée) : noir, sans paniquer.
+        // Empty colors (unvalidated config): black, without panicking.
         let empty = Effect::Wave {
             colors: vec![],
             period_ms: 1000,

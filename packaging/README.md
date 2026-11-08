@@ -1,55 +1,55 @@
 # Packaging
 
-## Windows : installeur NSIS (cargo-packager 0.11.8)
+## Windows: NSIS installer (cargo-packager 0.11.8)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\build-windows.ps1
 ```
 
-Le script installe `cargo-packager` si absent, compile `hub-app` + `hub-daemon` en release, puis lance
-`cargo packager --release -c packaging\Packager.toml -f nsis` (NSIS est téléchargé automatiquement
-dans `%LOCALAPPDATA%\.cargo-packager\NSIS`). Sortie : `target\packager\controlanything_<version>_x64-setup.exe`.
+The script installs `cargo-packager` if missing, builds `hub-app` + `hub-daemon` in release, then runs
+`cargo packager --release -c packaging\Packager.toml -f nsis` (NSIS is downloaded automatically
+into `%LOCALAPPDATA%\.cargo-packager\NSIS`). Output: `target\packager\controlanything_<version>_x64-setup.exe`.
 
-L'installeur (admin, `perMachine`) :
+The installer (admin, `perMachine`):
 
-- installe dans `C:\Program Files\ControlAnything\` : `controlanything.exe`, `controlanythingd.exe`,
-  `pawnio\*.bin` (+ `pawnio\README.md`, licence LGPL des modules) et `README.md` ;
-- crée le raccourci du menu Démarrer vers `controlanything.exe` ;
-- **PawnIO** : si le service `PawnIO` n'existe pas, propose `winget install namazso.PawnIO`
-  (sinon ouvre https://pawnio.eu). `PawnIO_setup.exe` n'est **pas** embarqué (conditions de redistribution non vérifiées) ;
-- avant copie : `controlanythingd.exe uninstall` sur l'ancienne version si présente (exe déverrouillé) ;
-- après copie : `controlanythingd.exe install` (crée/démarre le service, supprime l'ancien service PCHub) ;
-- désinstallation : `controlanythingd.exe uninstall` (ventilos rendus au BIOS) avant suppression des fichiers.
+- installs into `C:\Program Files\ControlAnything\`: `controlanything.exe`, `controlanythingd.exe`,
+  `pawnio\*.bin` (+ `pawnio\README.md`, LGPL license of the modules) and `README.md`;
+- creates the Start menu shortcut to `controlanything.exe`;
+- **PawnIO**: if the `PawnIO` service does not exist, offers `winget install namazso.PawnIO`
+  (otherwise opens https://pawnio.eu). `PawnIO_setup.exe` is **not** bundled (redistribution terms unverified);
+- before copying: `controlanythingd.exe uninstall` on the old version if present (unlocks the exe);
+- after copying: `controlanythingd.exe install` (creates/starts the service, removes the old PCHub service);
+- uninstall: `controlanythingd.exe uninstall` (fans handed back to the BIOS) before the files are deleted.
 
-Ces hooks vivent dans `windows/installer.nsi`, copie du modèle de cargo-packager 0.11.8 : les
-modifications sont marquées `ControlAnything:`. À reporter si cargo-packager est mis à jour.
+These hooks live in `windows/installer.nsi`, a copy of the cargo-packager 0.11.8 template: the
+changes are tagged `ControlAnything:`. Carry them over if cargo-packager is upgraded.
 
-Installation silencieuse : `controlanything_..._x64-setup.exe /S` (pas de question PawnIO dans ce mode).
+Silent install: `controlanything_..._x64-setup.exe /S` (no PawnIO question in this mode).
 
-Pas de MSI : WiX demanderait des custom actions pour les hooks du service, non fait.
+No MSI: WiX would need custom actions for the service hooks, not done.
 
-La version de `Packager.toml` doit suivre `[workspace.package] version` de `Cargo.toml`.
+The version in `Packager.toml` must follow `[workspace.package] version` in `Cargo.toml`.
 
-## Linux : paquet .deb
+## Linux: .deb package
 
 ```sh
-sh packaging/linux/build-deb.sh   # sur Linux, depuis la racine du dépôt
+sh packaging/linux/build-deb.sh   # on Linux, from the repo root
 ```
 
-Construit `target/packager/controlanything_<version>_<arch>.deb` avec `dpkg-deb` (cargo-packager 0.11
-ne gère pas les scripts postinst/prerm) :
+Builds `target/packager/controlanything_<version>_<arch>.deb` with `dpkg-deb` (cargo-packager 0.11
+does not handle postinst/prerm scripts):
 
 - `/usr/bin/controlanything`, `/usr/bin/controlanythingd`
 - `/lib/systemd/system/controlanythingd.service`
 - `/usr/share/applications/controlanything.desktop` + `/usr/share/pixmaps/controlanything.png`
-  (`assets/icons/controlanything.png`, à défaut `fan.png`)
-- `postinst` : `systemctl daemon-reload`, `enable`, `restart controlanythingd` ;
-  `prerm` : `systemctl disable --now controlanythingd` ; `postrm` : `daemon-reload`.
+  (`assets/icons/controlanything.png`, falling back to `fan.png`)
+- `postinst`: `systemctl daemon-reload`, `enable`, `restart controlanythingd`;
+  `prerm`: `systemctl disable --now controlanythingd`; `postrm`: `daemon-reload`.
 
-Installer : `sudo apt install ./target/packager/controlanything_*.deb`.
+Install: `sudo apt install ./target/packager/controlanything_*.deb`.
 
 ### AppImage
 
-Seulement pour l'UI (`controlanything`) : le daemon doit tourner en root comme service systemd, ce qu'une
-AppImage ne fournit pas. Le .deb (ou l'installation manuelle de [linux/README.md](linux/README.md)) reste
-nécessaire pour `controlanythingd`. Non automatisé ici.
+Only for the UI (`controlanything`): the daemon must run as root as a systemd service, which an
+AppImage does not provide. The .deb (or the manual install in [linux/README.md](linux/README.md)) is still
+required for `controlanythingd`. Not automated here.

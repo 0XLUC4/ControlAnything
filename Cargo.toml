@@ -1,17 +1,17 @@
-# Fichier: Cargo.toml
-# Pourquoi: versions centralisées, vérifiées sur crates.io le 2026-11-08
+# File: Cargo.toml
+# Why: centralized versions, checked on crates.io on 2026-11-08
 [workspace]
 resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98"
 
 [workspace.dependencies]
-# UI : gpui-kit (ex gpui-component) réexporte gpui-pre =0.3.11 (snapshot zed@f816e1f).
-# NE PAS ajouter gpui 0.2.2 de crates.io ni zed en git : deux GPUI incompatibles.
+# UI: gpui-kit (formerly gpui-component) re-exports gpui-pre =0.3.11 (snapshot zed@f816e1f).
+# DO NOT add gpui 0.2.2 from crates.io or zed from git: two incompatible GPUIs.
 gpui-kit = "=0.9.0"
 
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"] }
@@ -37,4 +37,4 @@ hub-rgb = { path = "crates/hub-rgb" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
-# panic reste "unwind" : avec "abort", les Drop qui remettent les ventilos en auto ne s'exécutent pas
+# panic stays "unwind": with "abort", the Drop impls that hand fans back to auto would not run

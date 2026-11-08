@@ -1,7 +1,7 @@
-//! Icône de la zone de notification : ouvrir, changer de profil, quitter.
+//! System tray icon: open, switch profile, quit.
 //!
-//! Windows : l'icône vit sur le thread UI (GPUI pompe les messages Win32 de tout le thread).
-//! Linux : tray-icon exige GTK, qui tourne sur un thread dédié ; on lui envoie les profils par canal.
+//! Windows: the icon lives on the UI thread (GPUI pumps the Win32 messages of the whole thread).
+//! Linux: tray-icon requires GTK, which runs on a dedicated thread; profiles are sent to it over a channel.
 
 use async_channel::Sender;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
@@ -12,17 +12,17 @@ const QUIT: &str = "quit";
 const PROFILE_PREFIX: &str = "profile:";
 pub const FAN_PNG: &[u8] = include_bytes!("../../../assets/icons/fan.png");
 
-/// Action demandée depuis la zone de notification ou un raccourci global.
+/// Action requested from the system tray or a global hotkey.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Open,
     Quit,
     SetProfile(String),
-    /// Ctrl+Shift+F1..F4 : profil n° `slot` (ordre de `config.profiles`).
+    /// Ctrl+Shift+F1..F4: profile no. `slot` (order of `config.profiles`).
     ProfileSlot(usize),
 }
 
-/// Id d'élément de menu → commande.
+/// Menu item id → command.
 fn menu_command(id: &str) -> Option<Command> {
     match id {
         OPEN => Some(Command::Open),
@@ -33,7 +33,7 @@ fn menu_command(id: &str) -> Option<Command> {
     }
 }
 
-/// Pixels RGBA de l'icône ventilateur.
+/// RGBA pixels of the fan icon.
 fn fan_rgba() -> Result<(Vec<u8>, u32, u32), String> {
     let image = image::load_from_memory_with_format(FAN_PNG, image::ImageFormat::Png)
         .map_err(|err| err.to_string())?
@@ -42,7 +42,7 @@ fn fan_rgba() -> Result<(Vec<u8>, u32, u32), String> {
     Ok((image.into_raw(), width, height))
 }
 
-/// Les gestionnaires (appelés hors de GPUI) relaient les évènements vers l'UI.
+/// The handlers (called outside GPUI) forward events to the UI.
 fn forward_events(commands: Sender<Command>) {
     let menu_commands = commands.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -50,7 +50,7 @@ fn forward_events(commands: Sender<Command>) {
             let _ = menu_commands.try_send(command);
         }
     }));
-    // Clic gauche sur l'icône : ouvrir (non émis par AppIndicator sous Linux : menu « Ouvrir »).
+    // Left click on the icon: open (not emitted by AppIndicator on Linux: "Open" menu).
     TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
         if let TrayIconEvent::Click {
             button: MouseButton::Left,
@@ -63,7 +63,7 @@ fn forward_events(commands: Sender<Command>) {
     }));
 }
 
-/// Icône et menu ; à manipuler sur le thread qui pompe ses messages.
+/// Icon and menu; must be used on the thread that pumps its messages.
 struct TrayMenu {
     _icon: TrayIcon,
     profiles: Submenu,
@@ -75,15 +75,15 @@ impl TrayMenu {
         let (rgba, width, height) = fan_rgba()?;
         let icon =
             tray_icon::Icon::from_rgba(rgba, width, height).map_err(|err| err.to_string())?;
-        let profiles = Submenu::new("Profil", true);
+        let profiles = Submenu::new("Profile", true);
         let menu = Menu::new();
         menu.append_items(&[
-            &MenuItem::with_id(OPEN, "Ouvrir ControlAnything", true, None),
+            &MenuItem::with_id(OPEN, "Open ControlAnything", true, None),
             &profiles,
             &PredefinedMenuItem::separator(),
             &MenuItem::with_id(
                 QUIT,
-                "Quitter (le daemon garde la main sur les ventilateurs)",
+                "Quit (the daemon keeps controlling the fans)",
                 true,
                 None,
             ),
@@ -103,8 +103,8 @@ impl TrayMenu {
         })
     }
 
-    /// Reconstruit la liste si elle a changé, puis recoche le profil actif
-    /// (un clic coche l'élément même si le daemon refuse le changement).
+    /// Rebuilds the list if it changed, then re-checks the active profile
+    /// (a click checks the item even if the daemon rejects the change).
     fn set_profiles(&mut self, names: &[String], active: &str) {
         if names != self.names {
             while self.profiles.remove_at(0).is_some() {}
@@ -117,7 +117,7 @@ impl TrayMenu {
                     None,
                 );
                 if let Err(err) = self.profiles.append(&item) {
-                    tracing::warn!("menu de la zone de notification : {err}");
+                    tracing::warn!("system tray menu: {err}");
                 }
             }
             self.names = names.to_vec();
@@ -139,7 +139,7 @@ pub struct Tray {
 }
 
 impl Tray {
-    /// À appeler sur le thread UI de GPUI.
+    /// Must be called on the GPUI UI thread.
     #[cfg(not(target_os = "linux"))]
     pub fn new(commands: Sender<Command>) -> Result<Self, String> {
         let menu = TrayMenu::build()?;
@@ -196,15 +196,15 @@ mod tests {
         assert_eq!(menu_command(OPEN), Some(Command::Open));
         assert_eq!(menu_command(QUIT), Some(Command::Quit));
         assert_eq!(
-            menu_command("profile:Jeu & Co"),
-            Some(Command::SetProfile("Jeu & Co".into()))
+            menu_command("profile:Games & Co"),
+            Some(Command::SetProfile("Games & Co".into()))
         );
-        assert_eq!(menu_command("autre"), None);
+        assert_eq!(menu_command("other"), None);
     }
 
     #[test]
     fn fan_icon_decodes() {
-        let (rgba, width, height) = fan_rgba().expect("icône PNG valide");
+        let (rgba, width, height) = fan_rgba().expect("valid PNG icon");
         assert_eq!((width, height), (64, 64));
         assert_eq!(rgba.len(), 64 * 64 * 4);
     }

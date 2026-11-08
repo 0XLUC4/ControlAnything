@@ -1,7 +1,7 @@
-//! Service Windows « ControlAnything » : installation/désinstallation et point d'entrée SCM.
+//! "ControlAnything" Windows service: install/uninstall and SCM entry point.
 //!
-//! Le service tourne en LocalSystem, démarre au boot et redémarre 5 s après un échec.
-//! L'arrêt (Stop/extinction) passe par le même chemin que la console : ventilos rendus au BIOS.
+//! The service runs as LocalSystem, starts at boot and restarts 5 s after a failure.
+//! Stopping (Stop/shutdown) goes through the same path as the console: fans handed back to the BIOS.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -17,10 +17,10 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 use windows_service::{define_windows_service, service_dispatcher};
 
 const SERVICE_NAME: &str = "ControlAnything";
-const DISPLAY_NAME: &str = "ControlAnything — contrôle du PC";
-const DESCRIPTION: &str = "Contrôle le matériel du PC (ventilateurs, capteurs…) pour ControlAnything \
-     et rend les ventilateurs au BIOS à l'arrêt.";
-/// Service de l'ancien nom « PC Hub », supprimé par `install`.
+const DISPLAY_NAME: &str = "ControlAnything - PC control";
+const DESCRIPTION: &str = "Controls the PC hardware (fans, sensors...) for ControlAnything \
+     and hands the fans back to the BIOS on stop.";
+/// Service of the former "PC Hub" name, removed by `install`.
 const LEGACY_SERVICE_NAME: &str = "PCHub";
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 
@@ -28,32 +28,32 @@ const ERROR_ACCESS_DENIED: i32 = 5;
 const ERROR_SERVICE_DOES_NOT_EXIST: i32 = 1060;
 const ERROR_SERVICE_EXISTS: i32 = 1073;
 
-/// Traduit les erreurs Win32 courantes en message clair.
+/// Translates common Win32 errors into a clear message.
 fn explain(err: windows_service::Error, action: &str) -> anyhow::Error {
     let code = match &err {
         windows_service::Error::Winapi(io) => io.raw_os_error(),
         _ => None,
     };
     match code {
-        Some(ERROR_ACCESS_DENIED) => anyhow::anyhow!("accès refusé : relancez en administrateur"),
+        Some(ERROR_ACCESS_DENIED) => anyhow::anyhow!("access denied: run again as administrator"),
         Some(ERROR_SERVICE_EXISTS) => {
-            anyhow::anyhow!("le service {SERVICE_NAME} est déjà installé (désinstallez-le d'abord)")
+            anyhow::anyhow!("the {SERVICE_NAME} service is already installed (uninstall it first)")
         }
         Some(ERROR_SERVICE_DOES_NOT_EXIST) => {
-            anyhow::anyhow!("le service {SERVICE_NAME} n'est pas installé")
+            anyhow::anyhow!("the {SERVICE_NAME} service is not installed")
         }
-        _ => anyhow::anyhow!("{action} : {err}"),
+        _ => anyhow::anyhow!("{action}: {err}"),
     }
 }
 
-/// Crée le service (démarrage auto, LocalSystem, redémarrage après 5 s) puis le démarre.
+/// Creates the service (auto start, LocalSystem, restart after 5 s) then starts it.
 pub fn install() -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
     let manager = ServiceManager::local_computer(
         None::<&str>,
         ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
     )
-    .map_err(|e| explain(e, "connexion au gestionnaire de services"))?;
+    .map_err(|e| explain(e, "connecting to the service manager"))?;
     remove_legacy(&manager)?;
     let info = ServiceInfo {
         name: SERVICE_NAME.into(),
@@ -69,10 +69,10 @@ pub fn install() -> anyhow::Result<()> {
     };
     let service = manager
         .create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START)
-        .map_err(|e| explain(e, "création du service"))?;
+        .map_err(|e| explain(e, "creating the service"))?;
     service
         .set_description(DESCRIPTION)
-        .map_err(|e| explain(e, "description du service"))?;
+        .map_err(|e| explain(e, "service description"))?;
     let restart = ServiceAction {
         action_type: ServiceActionType::Restart,
         delay: Duration::from_secs(5),
@@ -84,40 +84,40 @@ pub fn install() -> anyhow::Result<()> {
             command: None,
             actions: Some(vec![restart.clone(), restart.clone(), restart]),
         })
-        .map_err(|e| explain(e, "actions en cas d'échec"))?;
-    // Un arrêt en erreur (pas seulement un crash) déclenche aussi le redémarrage.
+        .map_err(|e| explain(e, "failure actions"))?;
+    // A stop with an error (not only a crash) also triggers the restart.
     service
         .set_failure_actions_on_non_crash_failures(true)
-        .map_err(|e| explain(e, "actions en cas d'échec"))?;
-    println!("service {SERVICE_NAME} installé ({})", exe.display());
+        .map_err(|e| explain(e, "failure actions"))?;
+    println!("service {SERVICE_NAME} installed ({})", exe.display());
     service
         .start(&[] as &[&OsStr])
-        .map_err(|e| explain(e, "démarrage du service"))?;
+        .map_err(|e| explain(e, "starting the service"))?;
     println!(
-        "service {SERVICE_NAME} démarré ; logs dans {}",
+        "service {SERVICE_NAME} started; logs in {}",
         log_dir().display()
     );
     Ok(())
 }
 
-/// Arrête le service (attente max 10 s) puis le supprime.
+/// Stops the service (waits up to 10 s) then deletes it.
 pub fn uninstall() -> anyhow::Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
-        .map_err(|e| explain(e, "connexion au gestionnaire de services"))?;
+        .map_err(|e| explain(e, "connecting to the service manager"))?;
     let service = manager
         .open_service(SERVICE_NAME, STOP_DELETE)
-        .map_err(|e| explain(e, "ouverture du service"))?;
+        .map_err(|e| explain(e, "opening the service"))?;
     stop_and_delete(&service, SERVICE_NAME)?;
-    println!("service {SERVICE_NAME} désinstallé");
+    println!("service {SERVICE_NAME} uninstalled");
     Ok(())
 }
 
-/// Droits nécessaires pour arrêter puis supprimer un service.
+/// Rights needed to stop then delete a service.
 const STOP_DELETE: ServiceAccess = ServiceAccess::QUERY_STATUS
     .union(ServiceAccess::STOP)
     .union(ServiceAccess::DELETE);
 
-/// Supprime l'ancien service « PCHub » s'il existe (son arrêt rend les ventilos au BIOS).
+/// Removes the old "PCHub" service if it exists (stopping it hands the fans back to the BIOS).
 fn remove_legacy(manager: &ServiceManager) -> anyhow::Result<()> {
     let service = match manager.open_service(LEGACY_SERVICE_NAME, STOP_DELETE) {
         Ok(service) => service,
@@ -126,33 +126,33 @@ fn remove_legacy(manager: &ServiceManager) -> anyhow::Result<()> {
         {
             return Ok(());
         }
-        Err(e) => return Err(explain(e, "ouverture de l'ancien service PCHub")),
+        Err(e) => return Err(explain(e, "opening the old PCHub service")),
     };
     stop_and_delete(&service, LEGACY_SERVICE_NAME)?;
-    println!("ancien service {LEGACY_SERVICE_NAME} supprimé");
+    println!("old service {LEGACY_SERVICE_NAME} removed");
     Ok(())
 }
 
-/// Arrête `service` (attente max 10 s) puis le supprime.
+/// Stops `service` (waits up to 10 s) then deletes it.
 fn stop_and_delete(service: &Service, name: &str) -> anyhow::Result<()> {
     let status = service
         .query_status()
-        .map_err(|e| explain(e, "état du service"))?;
+        .map_err(|e| explain(e, "service status"))?;
     if status.current_state != ServiceState::Stopped {
-        service.stop().map_err(|e| explain(e, "arrêt du service"))?;
+        service.stop().map_err(|e| explain(e, "stopping the service"))?;
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let state = service
                 .query_status()
-                .map_err(|e| explain(e, "état du service"))?
+                .map_err(|e| explain(e, "service status"))?
                 .current_state;
             if state == ServiceState::Stopped {
-                println!("service {name} arrêté (ventilos rendus au BIOS)");
+                println!("service {name} stopped (fans handed back to the BIOS)");
                 break;
             }
             if Instant::now() >= deadline {
                 eprintln!(
-                    "le service {name} ne s'est pas arrêté en 10 s ; suppression à son arrêt"
+                    "the {name} service did not stop within 10 s; it will be deleted when it stops"
                 );
                 break;
             }
@@ -161,11 +161,11 @@ fn stop_and_delete(service: &Service, name: &str) -> anyhow::Result<()> {
     }
     service
         .delete()
-        .map_err(|e| explain(e, "suppression du service"))?;
+        .map_err(|e| explain(e, "deleting the service"))?;
     Ok(())
 }
 
-/// `%ProgramData%\ControlAnything\logs`, à côté de la config.
+/// `%ProgramData%\ControlAnything\logs`, next to the config.
 fn log_dir() -> PathBuf {
     logs_beside(&crate::config_store::config_path())
 }
@@ -176,7 +176,7 @@ fn logs_beside(config: &Path) -> PathBuf {
 
 define_windows_service!(ffi_service_main, service_main);
 
-/// Point d'entrée `controlanythingd service` : logs fichiers puis rend la main au SCM (bloquant).
+/// `controlanythingd service` entry point: file logs, then hands control to the SCM (blocking).
 pub fn run_dispatcher() -> anyhow::Result<()> {
     let appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
@@ -186,18 +186,18 @@ pub fn run_dispatcher() -> anyhow::Result<()> {
         .build(log_dir())?;
     let (writer, _guard) = tracing_appender::non_blocking(appender);
     crate::init_tracing(writer);
-    // `_guard` vit jusqu'à la fin du service : il vide les logs restants à la sortie.
+    // `_guard` lives until the service ends: it flushes the remaining logs on exit.
     service_dispatcher::start(SERVICE_NAME, ffi_service_main).map_err(|e| {
         explain(
             e,
-            "lancement par le gestionnaire de services (utilisez `install`)",
+            "launch by the service manager (use `install`)",
         )
     })
 }
 
 fn service_main(_arguments: Vec<OsString>) {
     if let Err(err) = run_service() {
-        tracing::error!("service : {err:#}");
+        tracing::error!("service: {err:#}");
     }
 }
 
@@ -205,7 +205,7 @@ fn run_service() -> anyhow::Result<()> {
     let (stop_tx, mut stop_rx) = tokio::sync::mpsc::unbounded_channel();
     let handler = move |control| match control {
         ServiceControl::Stop | ServiceControl::Shutdown => {
-            let _ = stop_tx.send(control); // service déjà en arrêt : rien à faire
+            let _ = stop_tx.send(control); // service already stopping: nothing to do
             ServiceControlHandlerResult::NoError
         }
         ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
@@ -228,7 +228,7 @@ fn run_service() -> anyhow::Result<()> {
             process_id: None,
         });
         if let Err(err) = result {
-            tracing::warn!("statut {state:?} non transmis au SCM : {err}");
+            tracing::warn!("status {state:?} not sent to the SCM: {err}");
         }
     };
 
@@ -239,16 +239,16 @@ fn run_service() -> anyhow::Result<()> {
             runtime.block_on(async {
                 let daemon = crate::start()?;
                 report(ServiceState::Running, ServiceExitCode::NO_ERROR);
-                tracing::info!("service {SERVICE_NAME} démarré");
+                tracing::info!("service {SERVICE_NAME} started");
                 crate::run(daemon, async {
                     let control = stop_rx.recv().await;
-                    tracing::info!("{control:?} demandé par le SCM, arrêt");
+                    tracing::info!("{control:?} requested by the SCM, stopping");
                     report(ServiceState::StopPending, ServiceExitCode::NO_ERROR);
                 })
                 .await
             })
         });
-    // Code non nul -> le SCM applique les actions d'échec (redémarrage après 5 s).
+    // Non-zero code -> the SCM applies the failure actions (restart after 5 s).
     let exit_code = match &result {
         Ok(()) => ServiceExitCode::NO_ERROR,
         Err(_) => ServiceExitCode::ServiceSpecific(1),

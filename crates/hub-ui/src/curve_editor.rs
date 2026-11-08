@@ -1,4 +1,4 @@
-//! Éditeur de courbe température → vitesse : dessin (canvas) et règles d'édition pures.
+//! Temperature → speed curve editor: drawing (canvas) and pure editing rules.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -13,12 +13,12 @@ use hub_core::config::CurvePoint;
 
 use crate::prefs::TempUnit;
 
-/// Bornes des axes : X en °C, Y en %.
+/// Axis bounds: X in °C, Y in %.
 pub const TEMP_MIN: f32 = 20.0;
 pub const TEMP_MAX: f32 = 100.0;
-/// Écart minimal entre deux points voisins (°C).
+/// Minimum gap between two neighbouring points (°C).
 const MIN_GAP: f32 = 1.0;
-/// Rayon de capture d'une poignée (px).
+/// Handle hit radius (px).
 const HIT_RADIUS: f32 = 9.0;
 const HANDLE_RADIUS: f32 = 5.0;
 pub const WIDTH: f32 = 520.0;
@@ -26,21 +26,21 @@ pub const HEIGHT: f32 = 260.0;
 const CURVE_COLOR: u32 = 0x38bdf8;
 const MARKER_COLOR: u32 = 0xf97316;
 
-/// (temp, duty) → position dans la zone de tracé (origine en haut à gauche).
+/// (temp, duty) → position in the plot area (origin at top left).
 pub fn to_px(temp: f32, duty: f32, width: f32, height: f32) -> (f32, f32) {
     let x = (temp - TEMP_MIN) / (TEMP_MAX - TEMP_MIN) * width;
     let y = (1.0 - duty / 100.0) * height;
     (x, y)
 }
 
-/// Position → (temp arrondie au degré, duty en %), bornées aux axes.
+/// Position → (temp rounded to the degree, duty in %), clamped to the axes.
 pub fn from_px(x: f32, y: f32, width: f32, height: f32) -> (f32, u8) {
     let temp = TEMP_MIN + (x / width).clamp(0.0, 1.0) * (TEMP_MAX - TEMP_MIN);
     let duty = ((1.0 - y / height).clamp(0.0, 1.0) * 100.0).round() as u8;
     (temp.round(), duty)
 }
 
-/// Index du point sous le curseur, s'il y en a un.
+/// Index of the point under the cursor, if any.
 pub fn hit(points: &[CurvePoint], x: f32, y: f32, width: f32, height: f32) -> Option<usize> {
     points.iter().position(|p| {
         let (px, py) = to_px(p.temp, f32::from(p.duty), width, height);
@@ -48,7 +48,7 @@ pub fn hit(points: &[CurvePoint], x: f32, y: f32, width: f32, height: f32) -> Op
     })
 }
 
-/// Déplace un point sans qu'il croise ses voisins : l'ordre (et donc l'index) est conservé.
+/// Moves a point without crossing its neighbours: the order (and so the index) is kept.
 pub fn move_point(points: &mut [CurvePoint], index: usize, temp: f32, duty: u8) {
     let low = index
         .checked_sub(1)
@@ -62,7 +62,7 @@ pub fn move_point(points: &mut [CurvePoint], index: usize, temp: f32, duty: u8) 
     }
 }
 
-/// Insère un point à sa place ; refusé s'il est trop proche d'un point existant.
+/// Inserts a point in order; rejected if too close to an existing point.
 pub fn add_point(points: &mut Vec<CurvePoint>, temp: f32, duty: u8) -> bool {
     if points.iter().any(|p| (p.temp - temp).abs() < MIN_GAP) {
         return false;
@@ -72,7 +72,7 @@ pub fn add_point(points: &mut Vec<CurvePoint>, temp: f32, duty: u8) -> bool {
     true
 }
 
-/// Supprime un point en gardant au moins deux points.
+/// Removes a point while keeping at least two points.
 pub fn remove_point(points: &mut Vec<CurvePoint>, index: usize) -> bool {
     if points.len() <= 2 || index >= points.len() {
         return false;
@@ -81,16 +81,16 @@ pub fn remove_point(points: &mut Vec<CurvePoint>, index: usize) -> bool {
     true
 }
 
-/// État d'interaction de l'éditeur (le tracé lui-même vient du brouillon de config).
+/// Editor interaction state (the curve itself comes from the config draft).
 #[derive(Default)]
 pub struct CurveEditor {
-    /// Zone de tracé à l'écran, mise à jour à chaque frame (les évènements souris sont en coordonnées fenêtre).
+    /// On-screen plot area, updated every frame (mouse events are in window coordinates).
     bounds: Rc<Cell<Bounds<Pixels>>>,
     pub dragging: Option<usize>,
 }
 
 impl CurveEditor {
-    /// Position souris → coordonnées locales à la zone de tracé.
+    /// Mouse position → coordinates local to the plot area.
     pub fn local(&self, position: Point<Pixels>) -> (f32, f32) {
         let origin = self.bounds.get().origin;
         (
@@ -99,8 +99,8 @@ impl CurveEditor {
         )
     }
 
-    /// Graphe avec axes, grille, courbe, poignées et repère « température actuelle / consigne ».
-    /// Les gestionnaires souris sont fournis par la vue propriétaire.
+    /// Chart with axes, grid, curve, handles and a "current temperature / target" marker.
+    /// Mouse handlers are provided by the owning view.
     pub fn render<V: 'static>(
         &self,
         points: &[CurvePoint],
@@ -166,7 +166,7 @@ impl CurveEditor {
     }
 }
 
-/// Gestionnaires souris de la zone de tracé (appelés sur la vue `V`).
+/// Mouse handlers of the plot area (called on view `V`).
 pub struct CurveHandlers<V> {
     pub down: fn(&mut V, &gpui_kit::MouseDownEvent, &mut Window, &mut Context<V>),
     pub right: fn(&mut V, &gpui_kit::MouseDownEvent, &mut Window, &mut Context<V>),
@@ -190,7 +190,7 @@ fn paint(
     let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
     let at = |x: f32, y: f32| point(bounds.origin.x + px(x), bounds.origin.y + px(y));
 
-    // Grille : tous les 10 °C et 10 %.
+    // Grid: every 10 °C and 10 %.
     for i in 0..=8 {
         let (x, _) = to_px(TEMP_MIN + i as f32 * 10.0, 0.0, w, h);
         window.paint_quad(fill(
@@ -211,7 +211,7 @@ fn paint(
         .map(|p| to_px(p.temp, f32::from(p.duty), w, h))
         .collect();
     if let (Some(first), Some(last)) = (curve.first(), curve.last()) {
-        // La courbe est bornée : plate avant le premier et après le dernier point.
+        // The curve is clamped: flat before the first and after the last point.
         let mut line = PathBuilder::stroke(px(2.));
         line.move_to(at(0.0, first.1));
         for &(x, y) in &curve {
@@ -238,7 +238,7 @@ fn paint(
     }
 }
 
-/// Disque centré sur `center`, bordé de `border`.
+/// Disc centred on `center`, outlined with `border`.
 fn dot(window: &mut Window, center: Point<Pixels>, radius: f32, background: Hsla, border: Hsla) {
     let r = px(radius);
     window.paint_quad(quad(
@@ -251,12 +251,12 @@ fn dot(window: &mut Window, center: Point<Pixels>, radius: f32, background: Hsla
     ));
 }
 
-/// Libellé court d'un mode (pour l'aide sous le graphe).
+/// Short help text shown under the chart.
 pub fn help_text(app: &App) -> impl IntoElement {
     div()
         .text_xs()
         .text_color(app.theme().muted_foreground)
-        .child("Glisser : déplacer un point · Double-clic : ajouter · Clic droit : supprimer")
+        .child("Drag: move a point, Double-click: add, Right-click: remove")
 }
 
 #[cfg(test)]
@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(to_px(20.0, 100.0, 400.0, 200.0), (0.0, 0.0));
         assert_eq!(to_px(100.0, 0.0, 400.0, 200.0), (400.0, 200.0));
         assert_eq!(from_px(200.0, 100.0, 400.0, 200.0), (60.0, 50));
-        // Hors zone : borné aux axes.
+        // Outside the area: clamped to the axes.
         assert_eq!(from_px(-50.0, 500.0, 400.0, 200.0), (20.0, 0));
         assert_eq!(from_px(900.0, -5.0, 400.0, 200.0), (100.0, 100));
     }

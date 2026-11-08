@@ -1,4 +1,4 @@
-//! Accès au pilote PawnIO : un handle = un module signé chargé.
+//! PawnIO driver access: one handle = one loaded signed module.
 
 use std::ffi::c_void;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -16,16 +16,16 @@ const IOCTL_LOAD: u32 = (41394 << 16) | (0x821 << 2);
 const IOCTL_EXEC: u32 = (41394 << 16) | (0x841 << 2);
 const FN_NAME_LEN: usize = 32;
 
-/// Handle PawnIO avec un module chargé. Fermé au Drop.
+/// PawnIO handle with a loaded module. Closed on Drop.
 pub(crate) struct PawnIo {
     handle: OwnedHandle,
 }
 
 impl PawnIo {
-    /// Ouvre `\\?\GLOBALROOT\Device\PawnIO` et charge le module signé lu dans `module_path`.
+    /// Opens `\\?\GLOBALROOT\Device\PawnIO` and loads the signed module read from `module_path`.
     pub(crate) fn open(module_path: &Path) -> Result<Self, HwError> {
         let module = std::fs::read(module_path)?;
-        // SAFETY: chaîne UTF-16 statique terminée par zéro, aucun pointeur conservé.
+        // SAFETY: static null-terminated UTF-16 string, no pointer retained.
         let raw = unsafe {
             CreateFileW(
                 w!(r"\\?\GLOBALROOT\Device\PawnIO"),
@@ -37,30 +37,30 @@ impl PawnIo {
                 None,
             )
         }
-        // Code Win32 brut (HRESULT 0x8007xxxx) : sinon `kind()` vaut Uncategorized.
+        // Raw Win32 code (HRESULT 0x8007xxxx): otherwise `kind()` is Uncategorized.
         .map_err(|err| match std::io::Error::from_raw_os_error(err.code().0 & 0xFFFF) {
             e if e.kind() == std::io::ErrorKind::PermissionDenied => {
                 HwError::PermissionDenied("PawnIO".into())
             }
             e if e.kind() == std::io::ErrorKind::NotFound => {
-                HwError::Unavailable("PawnIO non installé".into())
+                HwError::Unavailable("PawnIO not installed".into())
             }
             e => HwError::Io(e),
         })?;
-        // SAFETY: handle valide venant de CreateFileW, possédé exclusivement ici.
+        // SAFETY: valid handle from CreateFileW, exclusively owned here.
         let pawn = Self { handle: unsafe { OwnedHandle::from_raw_handle(raw.0) } };
         pawn.ioctl(IOCTL_LOAD, &module, &mut [])?;
         Ok(pawn)
     }
 
-    /// Appelle la fonction `name` du module : entrée = nom (32 octets) + `args`,
-    /// sortie = exactement `out.len()` cellules de 64 bits.
+    /// Calls the module function `name`: input = name (32 bytes) + `args`,
+    /// output = exactly `out.len()` 64-bit cells.
     pub(crate) fn execute(&self, name: &str, args: &[u64], out: &mut [u64]) -> Result<(), HwError> {
         let input = exec_input(name, args)?;
         let mut raw_out = vec![0u8; out.len() * 8];
         let read = self.ioctl(IOCTL_EXEC, &input, &mut raw_out)?;
         if read != raw_out.len() {
-            return Err(HwError::Other(format!("PawnIO {name} : réponse de {read} octets")));
+            return Err(HwError::Other(format!("PawnIO {name}: {read}-byte response")));
         }
         for (cell, bytes) in out.iter_mut().zip(raw_out.as_chunks::<8>().0) {
             *cell = u64::from_le_bytes(*bytes);
@@ -70,7 +70,7 @@ impl PawnIo {
 
     fn ioctl(&self, code: u32, input: &[u8], output: &mut [u8]) -> Result<usize, HwError> {
         let mut returned = 0u32;
-        // SAFETY: tampons valides pendant l'appel synchrone, tailles exactes passées au pilote.
+        // SAFETY: buffers valid during the synchronous call, exact sizes passed to the driver.
         unsafe {
             DeviceIoControl(
                 HANDLE(self.handle.as_raw_handle()),
@@ -88,10 +88,10 @@ impl PawnIo {
     }
 }
 
-/// Tampon d'entrée IOCTL_EXEC : nom ASCII zéro-terminé sur 32 octets puis arguments LE.
+/// IOCTL_EXEC input buffer: null-terminated ASCII name on 32 bytes, then LE arguments.
 fn exec_input(name: &str, args: &[u64]) -> Result<Vec<u8>, HwError> {
     if name.len() >= FN_NAME_LEN {
-        return Err(HwError::Other(format!("nom de fonction PawnIO trop long : {name}")));
+        return Err(HwError::Other(format!("PawnIO function name too long: {name}")));
     }
     let mut input = vec![0u8; FN_NAME_LEN + args.len() * 8];
     input[..name.len()].copy_from_slice(name.as_bytes());

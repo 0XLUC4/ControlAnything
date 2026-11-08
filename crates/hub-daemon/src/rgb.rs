@@ -1,11 +1,11 @@
-//! Thread RGB : possède tous les appareils RGB et rend les effets à ~30 images/s.
+//! RGB thread: owns all RGB devices and renders effects at ~30 frames/s.
 //!
-//! Règle : un appareil est soit entièrement piloté par le logiciel, soit entièrement rendu au
-//! firmware (la plupart des contrôleurs ne savent pas laisser une seule zone au firmware).
-//! Si au moins une zone a un effet logiciel, les zones `Firmware` du même appareil sont éteintes.
+//! Rule: a device is either fully driven by software or fully handed back to firmware
+//! (most controllers cannot leave a single zone to the firmware).
+//! If at least one zone has a software effect, the `Firmware` zones of the same device are turned off.
 //!
-//! Sécurité : la `RgbConfig` par défaut n'a ni `sync` ni zone -> tout est `Firmware` -> rien
-//! n'est jamais écrit tant que l'utilisateur n'a pas configuré d'effet.
+//! Safety: the default `RgbConfig` has neither `sync` nor zones -> everything is `Firmware` -> nothing
+//! is ever written until the user has configured an effect.
 
 use hub_core::Reading;
 use hub_core::ipc::{self, DaemonMsg};
@@ -14,21 +14,21 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, watch};
 
-/// ~30 images/s.
+/// ~30 frames/s.
 const FRAME: Duration = Duration::from_millis(33);
 
-/// Messages reçus par le thread RGB.
+/// Messages received by the RGB thread.
 pub enum RgbCmd {
-    /// Nouvelle config RGB (envoyée par le thread de contrôle quand elle change).
+    /// New RGB config (sent by the control thread when it changes).
     Config(RgbConfig),
-    /// Dernières mesures (à chaque tick du thread de contrôle), pour les effets température/charge.
+    /// Latest readings (on each control thread tick), for temperature/load effects.
     Readings(Vec<Reading>),
     Stop,
 }
 
-/// Image complète d'un appareil, ou `None` si toutes ses zones sont `Firmware`.
-/// `rendered[i]` = rendu de la zone `i` (`None` = Firmware) ; une zone Firmware d'un appareil
-/// piloté est éteinte.
+/// Full frame of a device, or `None` if all its zones are `Firmware`.
+/// `rendered[i]` = render of zone `i` (`None` = Firmware); a Firmware zone of a driven
+/// device is turned off.
 fn assemble(zones: &[RgbZone], rendered: Vec<Option<Vec<Rgb>>>) -> Option<Vec<Vec<Rgb>>> {
     if rendered.iter().all(Option::is_none) {
         return None;
@@ -42,10 +42,10 @@ fn assemble(zones: &[RgbZone], rendered: Vec<Option<Vec<Rgb>>>) -> Option<Vec<Ve
     )
 }
 
-/// Un appareil et son état de pilotage.
+/// A device and its driving state.
 struct Driven {
     device: Box<dyn RgbDevice>,
-    /// Vrai si le logiciel a écrit depuis le dernier `restore`.
+    /// True if software has written since the last `restore`.
     software: bool,
     last_error: Option<String>,
 }
@@ -75,7 +75,7 @@ impl Driven {
                 if let Some(message) = &error
                     && error != self.last_error
                 {
-                    tracing::warn!("RGB {} : {message}", self.device.info().id);
+                    tracing::warn!("RGB {}: {message}", self.device.info().id);
                 }
                 self.last_error = error;
             }
@@ -83,7 +83,7 @@ impl Driven {
     }
 }
 
-/// Publie la liste des appareils : gardée pour les nouveaux clients et diffusée aux connectés.
+/// Publishes the device list: kept for new clients and broadcast to connected ones.
 fn publish_devices(
     devices: Vec<RgbDeviceInfo>,
     live: &broadcast::Sender<String>,
@@ -92,14 +92,14 @@ fn publish_devices(
     match ipc::encode(&DaemonMsg::Rgb { devices }) {
         Ok(line) => {
             state.send_replace(line.clone());
-            let _ = live.send(line); // aucun client : rien à faire
+            let _ = live.send(line); // no client: nothing to do
         }
-        Err(err) => tracing::error!("encodage RGB : {err}"),
+        Err(err) => tracing::error!("encoding RGB: {err}"),
     }
 }
 
-/// Tourne jusqu'à `Stop` (ou fermeture du canal). Les appareils sont ouverts ici et lâchés à la
-/// fin : leur `Drop` rend l'éclairage au firmware.
+/// Runs until `Stop` (or channel closure). Devices are opened here and dropped at the
+/// end: their `Drop` hands the lighting back to firmware.
 pub fn run(
     mut config: RgbConfig,
     commands: Receiver<RgbCmd>,
@@ -114,7 +114,7 @@ pub fn run(
             last_error: None,
         })
         .collect();
-    tracing::info!("{} appareil(s) RGB", devices.len());
+    tracing::info!("{} RGB device(s)", devices.len());
     publish_devices(
         devices.iter().map(|d| d.device.info().clone()).collect(),
         &live,
@@ -122,7 +122,7 @@ pub fn run(
     );
 
     if devices.is_empty() {
-        // Rien à piloter : on dort sur le canal jusqu'à l'arrêt (pas de boucle active).
+        // Nothing to drive: sleep on the channel until stop (no busy loop).
         while let Ok(cmd) = commands.recv() {
             if matches!(cmd, RgbCmd::Stop) {
                 break;
@@ -144,13 +144,13 @@ pub fn run(
                 for device in &mut devices {
                     device.render(&config, &readings, elapsed);
                 }
-                // Rattrape sans rafale si une image a pris du retard.
+                // Catch up without a burst if a frame ran late.
                 next_frame = (next_frame + FRAME).max(Instant::now());
             }
         }
     }
-    tracing::info!("arrêt : éclairage rendu au firmware");
-    // `devices` lâché ici -> Drop -> restore.
+    tracing::info!("stopping: lighting handed back to firmware");
+    // `devices` dropped here -> Drop -> restore.
 }
 
 #[cfg(test)]

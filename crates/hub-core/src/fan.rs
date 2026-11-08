@@ -1,38 +1,38 @@
-//! Contrat des contrôleurs de ventilos (Super I/O, GPU, hwmon…).
+//! Fan controller contract (Super I/O, GPU, hwmon, etc.).
 
 use serde::{Deserialize, Serialize};
 
 use crate::HwError;
 
-/// Canal PWM pilotable.
+/// Controllable PWM channel.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FanChannel {
-    /// Id stable, ex. `nct6687/pwm1`, `gpu0/fan0`.
+    /// Stable id, e.g. `nct6687/pwm1`, `gpu0/fan0`.
     pub id: String,
     pub label: String,
-    /// Id du `Reading` RPM associé, s'il est connu.
+    /// Id of the associated RPM `Reading`, if known.
     pub rpm_sensor: Option<String>,
 }
 
-/// Consigne appliquée à un canal (diffusée à l'UI à chaque tick).
+/// Target applied to a channel (broadcast to the UI every tick).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FanStatus {
     pub channel: String,
-    /// `None` = canal rendu au firmware.
+    /// `None` = channel handed back to the firmware.
     pub duty: Option<u8>,
 }
 
-/// Pilote matériel de ventilos.
+/// Fan hardware driver.
 ///
-/// Les implémentations sauvegardent l'état d'origine à l'ouverture et appellent
-/// `restore_all` dans leur `Drop` : plantage (unwind) ou arrêt rendent la main au BIOS.
+/// Implementations save the original state on open and call
+/// `restore_all` in their `Drop`: a crash (unwind) or shutdown hands control back to the BIOS.
 pub trait FanController: Send {
     fn name(&self) -> &str;
     fn channels(&self) -> &[FanChannel];
-    /// Passe le canal en manuel et fixe le rapport cyclique (0..=100 %).
+    /// Switches the channel to manual and sets the duty cycle (0..=100 %).
     fn set_duty(&mut self, channel: &str, percent: u8) -> Result<(), HwError>;
-    /// Rend le canal au firmware (mode d'origine).
+    /// Hands the channel back to the firmware (original mode).
     fn set_auto(&mut self, channel: &str) -> Result<(), HwError>;
-    /// Rend tous les canaux au firmware ; ne doit jamais paniquer.
+    /// Hands every channel back to the firmware; must never panic.
     fn restore_all(&mut self);
 }

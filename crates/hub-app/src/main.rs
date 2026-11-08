@@ -1,4 +1,4 @@
-//! ControlAnything : fenêtre principale. Dialogue avec le daemon `controlanythingd` (une ligne JSON par message).
+//! ControlAnything: main window. Talks to the `controlanythingd` daemon (one JSON line per message).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -16,28 +16,28 @@ const RETRY_DELAY: Duration = Duration::from_secs(2);
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        // La console PowerShell 5.1 n'interprète pas les couleurs ANSI.
+        // The PowerShell 5.1 console does not interpret ANSI colors.
         .with_ansi(!cfg!(windows))
         .init();
 
-    // Gardé jusqu'à la fin de `main` : le relâcher autoriserait une seconde instance.
+    // Kept until the end of `main`: releasing it would allow a second instance.
     let Some(_instance_lock) = single_instance::acquire() else {
-        tracing::info!("ControlAnything est déjà ouvert : sortie");
+        tracing::info!("ControlAnything is already open: exiting");
         return;
     };
 
     let (daemon_tx, daemon_rx) = async_channel::bounded(16);
     let (client_tx, client_rx) = async_channel::unbounded();
     thread::spawn(move || ipc_client(daemon_tx, client_rx));
-    // `--minimized` : lancé à l'ouverture de session, démarrer dans la zone de notification.
+    // `--minimized`: launched at login, start in the notification area.
     let minimized = std::env::args().any(|arg| arg == "--minimized");
     hub_ui::run(daemon_rx, client_tx, minimized);
 }
 
-/// Écrivain de la connexion courante (`None` quand le daemon est absent).
+/// Writer of the current connection (`None` when the daemon is absent).
 type SharedWriter = Arc<Mutex<Option<Box<dyn Write + Send>>>>;
 
-/// Boucle de connexion au daemon : reconnecte toutes les 2 s, s'arrête si l'UI est fermée.
+/// Daemon connection loop: reconnects every 2 s, stops when the UI is closed.
 fn ipc_client(to_ui: Sender<DaemonMsg>, from_ui: Receiver<ClientMsg>) {
     let writer: SharedWriter = Arc::default();
     let shared = writer.clone();
@@ -50,15 +50,15 @@ fn ipc_client(to_ui: Sender<DaemonMsg>, from_ui: Receiver<ClientMsg>) {
         set_writer(&writer, None);
         match result {
             Ok(Closed::Ui) => return,
-            Ok(Closed::Daemon) => tracing::info!("daemon déconnecté"),
-            Err(err) => tracing::debug!("connexion au daemon impossible : {err}"),
+            Ok(Closed::Daemon) => tracing::info!("daemon disconnected"),
+            Err(err) => tracing::debug!("cannot connect to daemon: {err}"),
         }
         thread::sleep(RETRY_DELAY);
     }
 }
 
 fn set_writer(writer: &SharedWriter, value: Option<Box<dyn Write + Send>>) {
-    // Un verrou empoisonné ne contient qu'un flux : on le récupère tel quel.
+    // A poisoned lock only holds a stream: recover it as is.
     *writer.lock().unwrap_or_else(PoisonError::into_inner) = value;
 }
 
@@ -67,12 +67,12 @@ enum Closed {
     Daemon,
 }
 
-/// Envoie chaque commande de l'UI au daemon connecté ; sans daemon, la commande est perdue.
+/// Sends each UI command to the connected daemon; without a daemon, the command is dropped.
 fn write_loop(writer: &SharedWriter, commands: &Receiver<ClientMsg>) {
     while let Ok(msg) = commands.recv_blocking() {
         let mut guard = writer.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(stream) = guard.as_mut() else {
-            tracing::warn!("commande ignorée : daemon déconnecté");
+            tracing::warn!("command ignored: daemon disconnected");
             continue;
         };
         let sent = ipc::encode(&msg)
@@ -80,13 +80,13 @@ fn write_loop(writer: &SharedWriter, commands: &Receiver<ClientMsg>) {
             .and_then(|line| stream.write_all(line.as_bytes()))
             .and_then(|()| stream.flush());
         if let Err(err) = sent {
-            tracing::warn!("envoi au daemon impossible : {err}");
+            tracing::warn!("cannot send to daemon: {err}");
             *guard = None;
         }
     }
 }
 
-/// Relaie chaque ligne JSON vers l'UI jusqu'à la fin du flux.
+/// Relays each JSON line to the UI until the end of the stream.
 fn forward(stream: impl Read, to_ui: &Sender<DaemonMsg>) -> io::Result<Closed> {
     for line in BufReader::new(stream).lines() {
         match ipc::decode(&line?) {
@@ -95,7 +95,7 @@ fn forward(stream: impl Read, to_ui: &Sender<DaemonMsg>) -> io::Result<Closed> {
                     return Ok(Closed::Ui);
                 }
             }
-            Err(err) => tracing::warn!("message invalide ignoré : {err}"),
+            Err(err) => tracing::warn!("invalid message ignored: {err}"),
         }
     }
     Ok(Closed::Daemon)

@@ -1,17 +1,17 @@
-//! Configuration persistée par le daemon : profils, réglages par ventilo, failsafe.
+//! Configuration persisted by the daemon: profiles, per-fan settings, failsafe.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Point de courbe : à `temp` °C, le ventilo tourne à `duty` %.
+/// Curve point: at `temp` °C, the fan runs at `duty` %.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CurvePoint {
     pub temp: f32,
     pub duty: u8,
 }
 
-/// Température qui pilote un ventilo (ids de `Reading`).
+/// Temperature driving a fan (`Reading` ids).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TempSource {
@@ -20,11 +20,11 @@ pub enum TempSource {
     Average { ids: Vec<String> },
 }
 
-/// Mode de pilotage d'un ventilo.
+/// Fan control mode.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum FanMode {
-    /// Rendu au BIOS / firmware : le daemon n'écrit rien.
+    /// Handed back to the BIOS / firmware: the daemon writes nothing.
     Auto,
     Fixed {
         duty: u8,
@@ -35,21 +35,21 @@ pub enum FanMode {
     },
 }
 
-/// Réglages d'un canal de ventilo dans un profil.
+/// Settings of one fan channel in a profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FanSettings {
     pub mode: FanMode,
-    /// Plancher en % hors mode Auto (pompe AIO, ventirad CPU).
+    /// Floor in % outside Auto mode (AIO pump, CPU cooler).
     pub min_duty: u8,
-    /// Sous cette température, arrêt complet (0 %) au lieu du plancher.
+    /// Below this temperature, full stop (0 %) instead of the floor.
     pub zero_rpm_below: Option<f32>,
-    /// Écart de température minimal (°C) avant de recalculer la consigne.
+    /// Minimum temperature change (°C) before recomputing the target.
     pub hysteresis: f32,
-    /// Variation maximale de consigne par tick, à la hausse et à la baisse (%).
+    /// Maximum target change per tick, upward and downward (%).
     pub step_up: u8,
     pub step_down: u8,
-    /// Délai minimal entre deux changements de consigne.
+    /// Minimum delay between two target changes.
     pub response_ms: u64,
 }
 
@@ -67,7 +67,7 @@ impl Default for FanSettings {
     }
 }
 
-/// Profil nommé. Un canal absent de `fans` reste en Auto.
+/// Named profile. A channel missing from `fans` stays in Auto.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
@@ -75,7 +75,7 @@ pub struct Profile {
     pub fans: BTreeMap<String, FanSettings>,
 }
 
-/// Seuils critiques : au-delà, tous les ventilos pilotés passent à 100 %.
+/// Critical thresholds: above them, every controlled fan goes to 100 %.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FailsafeConfig {
@@ -92,17 +92,17 @@ impl Default for FailsafeConfig {
     }
 }
 
-/// Configuration complète, fichier `config.toml` du daemon.
+/// Full configuration, the daemon's `config.toml` file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub poll_interval_ms: u64,
     pub active_profile: String,
     pub profiles: Vec<Profile>,
-    /// Noms personnalisés des canaux (« Avant 1 », « CPU Cooler »), communs à tous les profils.
+    /// Custom channel names ("Front 1", "CPU Cooler"), shared by all profiles.
     pub fan_labels: BTreeMap<String, String>,
     pub failsafe: FailsafeConfig,
-    /// Éclairage, commun à tous les profils.
+    /// Lighting, shared by all profiles.
     pub rgb: crate::rgb::RgbConfig,
 }
 
@@ -114,8 +114,8 @@ impl Default for Config {
         };
         Self {
             poll_interval_ms: 1000,
-            active_profile: "Équilibré".into(),
-            profiles: ["Silencieux", "Équilibré", "Performance", "Custom"]
+            active_profile: "Balanced".into(),
+            profiles: ["Silent", "Balanced", "Performance", "Custom"]
                 .map(profile)
                 .into(),
             fan_labels: BTreeMap::new(),
@@ -125,47 +125,47 @@ impl Default for Config {
     }
 }
 
-/// Erreur de configuration invalide (renvoyée à l'UI).
+/// Invalid configuration error (sent back to the UI).
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("configuration invalide : {0}")]
+    #[error("invalid configuration: {0}")]
     Invalid(String),
-    #[error("TOML illisible : {0}")]
+    #[error("unreadable TOML: {0}")]
     Parse(#[from] toml::de::Error),
-    #[error("TOML non sérialisable : {0}")]
+    #[error("TOML serialization failed: {0}")]
     Serialize(#[from] toml::ser::Error),
 }
 
 impl Config {
-    /// Profil actif, s'il existe.
+    /// Active profile, if it exists.
     pub fn active(&self) -> Option<&Profile> {
         self.profiles.iter().find(|p| p.name == self.active_profile)
     }
 
-    /// Normalise et vérifie la config reçue (UI ou fichier) avant de l'appliquer :
-    /// bornes 0..=100, points triés par température, profil actif existant, intervalle 500..=2000 ms…
+    /// Normalizes and checks a received config (UI or file) before applying it:
+    /// 0..=100 bounds, points sorted by temperature, existing active profile, 500..=2000 ms interval, etc.
     pub fn validate(&mut self) -> Result<(), ConfigError> {
         self.poll_interval_ms = self.poll_interval_ms.clamp(500, 2000);
         if self.profiles.is_empty() {
-            return Err(ConfigError::Invalid("aucun profil défini".into()));
+            return Err(ConfigError::Invalid("no profile defined".into()));
         }
         for (i, profile) in self.profiles.iter().enumerate() {
             if profile.name.trim().is_empty() {
                 return Err(ConfigError::Invalid(format!(
-                    "le profil n°{} n'a pas de nom",
+                    "profile #{} has no name",
                     i + 1
                 )));
             }
             if self.profiles[..i].iter().any(|p| p.name == profile.name) {
                 return Err(ConfigError::Invalid(format!(
-                    "nom de profil en double : « {} »",
+                    "duplicate profile name: \"{}\"",
                     profile.name
                 )));
             }
         }
         if self.active().is_none() {
             return Err(ConfigError::Invalid(format!(
-                "profil actif inconnu : « {} »",
+                "unknown active profile: \"{}\"",
                 self.active_profile
             )));
         }
@@ -173,7 +173,7 @@ impl Config {
             for (channel, fan) in &mut profile.fans {
                 fan.validate().map_err(|e| {
                     ConfigError::Invalid(format!(
-                        "profil « {} », canal « {channel} » : {e}",
+                        "profile \"{}\", channel \"{channel}\": {e}",
                         profile.name
                     ))
                 })?;
@@ -196,7 +196,7 @@ impl Config {
         Ok(())
     }
 
-    /// Lit puis valide une config TOML.
+    /// Parses then validates a TOML config.
     pub fn from_toml(text: &str) -> Result<Self, ConfigError> {
         let mut config: Self = toml::from_str(text)?;
         config.validate()?;
@@ -209,7 +209,7 @@ impl Config {
 }
 
 impl FanSettings {
-    /// Normalise un réglage de ventilo ; renvoie le motif du refus en français.
+    /// Normalizes a fan setting; returns the rejection reason.
     fn validate(&mut self) -> Result<(), String> {
         self.min_duty = self.min_duty.min(100);
         self.hysteresis = clamp_or(self.hysteresis, 0.0, 10.0, 2.0);
@@ -223,15 +223,15 @@ impl FanSettings {
                     TempSource::Max { ids } | TempSource::Average { ids } => ids.as_slice(),
                 };
                 if ids.is_empty() || ids.iter().any(|id| id.trim().is_empty()) {
-                    return Err("source de température sans capteur".into());
+                    return Err("temperature source has no sensor".into());
                 }
                 if points.is_empty() {
-                    return Err("la courbe doit contenir au moins un point".into());
+                    return Err("the curve must contain at least one point".into());
                 }
                 if points.iter().any(|p| !p.temp.is_finite()) {
-                    return Err("température de point de courbe invalide".into());
+                    return Err("invalid curve point temperature".into());
                 }
-                // Tri stable : à température égale, le dernier point saisi l'emporte.
+                // Stable sort: at equal temperature, the last entered point wins.
                 points.sort_by(|a, b| a.temp.total_cmp(&b.temp));
                 let mut unique: Vec<CurvePoint> = Vec::with_capacity(points.len());
                 for p in points.drain(..) {
@@ -248,7 +248,7 @@ impl FanSettings {
     }
 }
 
-/// Borne `value` ; NaN → `fallback`.
+/// Clamps `value`; NaN gives `fallback`.
 fn clamp_or(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
     if value.is_nan() {
         fallback
@@ -257,7 +257,7 @@ fn clamp_or(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
     }
 }
 
-/// Courbes prédéfinies proposées dans l'éditeur.
+/// Predefined curves offered in the editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Preset {
     Silent,
@@ -266,7 +266,7 @@ pub enum Preset {
 }
 
 impl Preset {
-    /// Mêmes courbes que les profils livrés (`configs/controlanything-profils.toml`).
+    /// Same curves as the shipped profiles (`configs/controlanything-profiles.toml`).
     pub fn points(self) -> Vec<CurvePoint> {
         let pts: &[(f32, u8)] = match self {
             Self::Silent => &[(45.0, 25), (65.0, 32), (78.0, 48), (88.0, 70), (95.0, 100)],
@@ -278,7 +278,7 @@ impl Preset {
             .collect()
     }
 
-    /// Applique la recette complète (courbe + lissage), en gardant la source de température.
+    /// Applies the full recipe (curve + smoothing), keeping the temperature source.
     pub fn apply(self, settings: &mut FanSettings) {
         let (min_duty, hysteresis, step_up, step_down, response_ms) = match self {
             Self::Silent => (25, 6.0, 3, 2, 3000),
@@ -295,7 +295,7 @@ impl Preset {
         settings.response_ms = response_ms;
     }
 
-    /// Vrai si `settings` correspond exactement à ce préréglage.
+    /// True if `settings` exactly matches this preset.
     pub fn matches(self, settings: &FanSettings) -> bool {
         let mut expected = settings.clone();
         self.apply(&mut expected);
@@ -349,10 +349,10 @@ mod tests {
             cpu_critical: 200.0,
             gpu_critical: 10.0,
         };
-        config.validate().expect("valide");
+        config.validate().expect("valid");
         let fan = fan_of(&config);
         let FanMode::Curve { points, .. } = &fan.mode else {
-            panic!("mode courbe attendu")
+            panic!("curve mode expected")
         };
         assert_eq!(points, &vec![pt(30.0, 25), pt(50.0, 40), pt(70.0, 100)]);
         assert_eq!(fan.min_duty, 100);
@@ -373,7 +373,7 @@ mod tests {
         };
         let mut config = with_fan(fan);
         config.poll_interval_ms = 9000;
-        config.validate().expect("valide");
+        config.validate().expect("valid");
         assert_eq!(fan_of(&config).mode, FanMode::Fixed { duty: 100 });
         assert_eq!(fan_of(&config).hysteresis, 2.0);
         assert_eq!(config.poll_interval_ms, 2000);
@@ -382,7 +382,7 @@ mod tests {
     fn assert_invalid(mut config: Config, needle: &str) {
         match config.validate() {
             Err(ConfigError::Invalid(msg)) => assert!(msg.contains(needle), "{msg}"),
-            other => panic!("attendu Invalid({needle}), obtenu {other:?}"),
+            other => panic!("expected Invalid({needle}), got {other:?}"),
         }
     }
 
@@ -393,14 +393,14 @@ mod tests {
                 profiles: vec![],
                 ..Config::default()
             },
-            "aucun profil",
+            "no profile",
         );
         let mut config = Config::default();
         config.profiles[0].name = " ".into();
-        assert_invalid(config, "n°1");
+        assert_invalid(config, "#1");
         let mut config = Config::default();
-        config.profiles[2].name = "Silencieux".into();
-        assert_invalid(config, "Silencieux");
+        config.profiles[2].name = "Silent".into();
+        assert_invalid(config, "Silent");
         assert_invalid(
             Config {
                 active_profile: "Nope".into(),
@@ -409,7 +409,7 @@ mod tests {
             "Nope",
         );
         assert_invalid(with_fan(curve_fan(vec![])), "nct6687/pwm1");
-        assert_invalid(with_fan(curve_fan(vec![pt(f32::NAN, 50)])), "Équilibré");
+        assert_invalid(with_fan(curve_fan(vec![pt(f32::NAN, 50)])), "Balanced");
         let empty_ids = FanSettings {
             mode: FanMode::Curve {
                 source: TempSource::Max { ids: vec![] },
@@ -431,8 +431,8 @@ mod tests {
     #[test]
     fn default_config_roundtrips_through_toml() {
         let config = Config::default();
-        let text = config.to_toml().expect("sérialisation");
-        assert_eq!(Config::from_toml(&text).expect("lecture"), config);
+        let text = config.to_toml().expect("serialization");
+        assert_eq!(Config::from_toml(&text).expect("parse"), config);
     }
 
     #[test]
@@ -471,9 +471,9 @@ mod tests {
         config
             .fan_labels
             .insert("nct6687/pwm1".into(), "CPU Cooler".into());
-        config.validate().expect("valide");
-        let text = config.to_toml().expect("sérialisation");
-        assert_eq!(Config::from_toml(&text).expect("lecture"), config, "{text}");
+        config.validate().expect("valid");
+        let text = config.to_toml().expect("serialization");
+        assert_eq!(Config::from_toml(&text).expect("parse"), config, "{text}");
     }
 
     #[test]
@@ -492,13 +492,13 @@ mode = "curve"
 source = { type = "sensor", id = "cpu/package_temp" }
 points = [{ temp = 60.0, duty = 80 }, { temp = 30.0, duty = 20 }]
 "#;
-        let config = Config::from_toml(text).expect("lecture");
+        let config = Config::from_toml(text).expect("parse");
         let fan = &config.profiles[0].fans["nct6687/pwm1"];
         assert_eq!(fan.min_duty, 30);
         assert_eq!(fan.step_up, FanSettings::default().step_up);
         assert_eq!(fan.zero_rpm_below, None);
         let FanMode::Curve { points, .. } = &fan.mode else {
-            panic!("mode courbe attendu")
+            panic!("curve mode expected")
         };
         assert_eq!(points[0], pt(30.0, 20));
         assert!(matches!(

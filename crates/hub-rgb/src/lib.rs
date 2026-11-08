@@ -1,12 +1,12 @@
-//! Éclairage RGB natif (sans OpenRGB) : moteur d'effets + pilotes d'appareils.
+//! Native RGB lighting (no OpenRGB): effect engine + device drivers.
 
 pub mod effects;
 pub mod mystic_light;
 
 use hub_core::rgb::RgbDevice;
 
-/// Ouvre tous les appareils RGB supportés présents (lecture seule à l'ouverture).
-/// Un appareil absent ou en erreur est simplement ignoré (log `warn`).
+/// Opens every supported RGB device present (read-only on open).
+/// A missing or failing device is simply skipped (`warn` log).
 pub fn detect() -> Vec<Box<dyn RgbDevice>> {
     mystic_light::detect()
 }

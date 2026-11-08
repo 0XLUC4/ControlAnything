@@ -1,7 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=ControlAnything
-Comment=Capteurs, ventilateurs et RGB du PC
+GenericName=PC Control
+Comment=PC sensors, fans and RGB
 Exec=controlanything
 Icon=controlanything
 Terminal=false

@@ -1,4 +1,4 @@
-//! Construction des sources de capteurs et des contrôleurs de ventilos de cette machine.
+//! Builds the sensor sources and fan controllers of this machine.
 
 mod nvidia;
 mod system;
@@ -9,7 +9,7 @@ use hub_core::{HwError, SensorProvider};
 pub type Sensors = Vec<Box<dyn SensorProvider>>;
 pub type Fans = Vec<Box<dyn FanController>>;
 
-/// Ouvre chaque backend ; un échec est logué et ignoré (le matériel peut manquer).
+/// Opens each backend; a failure is logged and ignored (the hardware may be missing).
 pub fn build_all() -> (Sensors, Fans) {
     let mut sensors: Sensors = Vec::new();
     let mut fans: Fans = Vec::new();
@@ -29,7 +29,7 @@ pub fn build_all() -> (Sensors, Fans) {
                 sensors.push(Box::new(nct_sensors));
                 fans.push(Box::new(nct_fans));
             }
-            Err(err) => tracing::warn!("nct6687 indisponible : {err}"),
+            Err(err) => tracing::warn!("nct6687 unavailable: {err}"),
         }
     }
     #[cfg(target_os = "linux")]
@@ -51,19 +51,19 @@ fn push_sensor<P: SensorProvider + 'static>(
 ) {
     match result {
         Ok(provider) => sensors.push(Box::new(provider)),
-        Err(err) => tracing::warn!("provider {name} indisponible : {err}"),
+        Err(err) => tracing::warn!("provider {name} unavailable: {err}"),
     }
 }
 
 fn push_fans<C: FanController + 'static>(fans: &mut Fans, name: &str, result: Result<C, HwError>) {
     match result {
         Ok(controller) => fans.push(Box::new(controller)),
-        Err(err) => tracing::warn!("ventilos {name} indisponibles : {err}"),
+        Err(err) => tracing::warn!("{name} fans unavailable: {err}"),
     }
 }
 
-/// Modules PawnIO livrés à côté de l'exécutable (`<dir exe>/pawnio/`) ; en debug, repli sur
-/// `assets/pawnio/` du dépôt pour que `cargo run` fonctionne.
+/// PawnIO modules shipped next to the executable (`<exe dir>/pawnio/`); in debug, falls back to
+/// the repo `assets/pawnio/` so that `cargo run` works.
 #[cfg(windows)]
 fn pawnio_dir() -> std::path::PathBuf {
     let shipped = std::env::current_exe()
@@ -77,7 +77,7 @@ fn pawnio_dir() -> std::path::PathBuf {
     }
 }
 
-/// Convertit des octets en MiB.
+/// Converts bytes to MiB.
 pub fn bytes_to_mib(bytes: u64) -> f32 {
     (bytes as f64 / (1024.0 * 1024.0)) as f32
 }

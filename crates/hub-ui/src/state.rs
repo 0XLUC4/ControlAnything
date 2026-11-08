@@ -1,4 +1,4 @@
-//! État partagé de l'UI : dernier message du daemon, brouillon de config et règles d'édition pures.
+//! Shared UI state: last daemon message, config draft and pure editing rules.
 
 use std::time::{Duration, Instant};
 
@@ -8,12 +8,12 @@ use hub_core::ipc::{DaemonMsg, Snapshot};
 use hub_core::rgb::RgbDeviceInfo;
 use hub_core::{Device, Reading, SensorKind};
 
-/// Au-delà, le daemon est considéré comme déconnecté.
+/// Beyond this, the daemon is considered disconnected.
 const STALE_AFTER: Duration = Duration::from_secs(3);
-/// Id de la température GPU (backend NVIDIA).
+/// GPU temperature id (NVIDIA backend).
 pub const GPU_TEMP: &str = "gpu0/temp";
 
-/// Message affiché en haut de page.
+/// Message shown at the top of the page.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Notice {
     Info(String),
@@ -24,22 +24,22 @@ pub enum Notice {
 pub struct HubState {
     pub latest: Option<Snapshot>,
     last_update: Option<Instant>,
-    /// Config confirmée par le dernier `State` du daemon.
+    /// Config confirmed by the last daemon `State`.
     pub config: Option<Config>,
-    /// Copie locale éditée par l'UI, envoyée par « Appliquer ».
+    /// Local copy edited by the UI, sent by "Apply".
     pub draft: Option<Config>,
     pub channels: Vec<FanChannel>,
     pub fans: Vec<FanStatus>,
     pub failsafe: bool,
-    /// Appareils RGB détectés par le daemon.
+    /// RGB devices detected by the daemon.
     pub rgb_devices: Vec<RgbDeviceInfo>,
     pub notice: Option<Notice>,
-    /// Un `SetConfig` attend sa réponse : le prochain `State` remplace le brouillon.
+    /// A `SetConfig` awaits its answer: the next `State` replaces the draft.
     pub pending_apply: bool,
 }
 
 impl HubState {
-    /// Intègre un message du daemon.
+    /// Applies a daemon message.
     pub fn receive(&mut self, msg: DaemonMsg) {
         match msg {
             DaemonMsg::Snapshot(snapshot) => {
@@ -60,7 +60,7 @@ impl HubState {
     }
 
     fn on_state(&mut self, config: Config, channels: Vec<FanChannel>) {
-        // Des modifications locales non envoyées survivent à un changement de profil.
+        // Unsent local edits survive a profile switch.
         let keep_edits = self.dirty() && !self.pending_apply;
         match self.draft.as_mut() {
             Some(draft) if keep_edits => draft.active_profile.clone_from(&config.active_profile),
@@ -71,7 +71,7 @@ impl HubState {
         self.pending_apply = false;
     }
 
-    /// Instant du dernier relevé reçu (`None` : daemon jamais vu).
+    /// Instant of the last received snapshot (`None`: daemon never seen).
     pub fn last_update(&self) -> Option<Instant> {
         self.last_update
     }
@@ -85,12 +85,12 @@ impl HubState {
         self.latest.as_ref().map_or(&[], |s| &s.readings)
     }
 
-    /// Le brouillon diffère de la config du daemon.
+    /// The draft differs from the daemon config.
     pub fn dirty(&self) -> bool {
         self.draft.is_some() && self.draft != self.config
     }
 
-    /// Consigne appliquée à un canal : `None` = inconnu, `Some(None)` = Auto (BIOS).
+    /// Duty applied to a channel: `None` = unknown, `Some(None)` = Auto (BIOS).
     pub fn applied_duty(&self, channel: &str) -> Option<Option<u8>> {
         self.fans
             .iter()
@@ -98,7 +98,7 @@ impl HubState {
             .map(|f| f.duty)
     }
 
-    /// Le canal a un ventilateur branché (voir [`fan_connected`]).
+    /// The channel has a fan plugged in (see [`fan_connected`]).
     pub fn is_connected(&self, channel: &FanChannel) -> bool {
         let piloted = matches!(self.applied_duty(&channel.id), Some(Some(_)))
             || self
@@ -109,25 +109,25 @@ impl HubState {
     }
 }
 
-/// Vitesse lue sur le capteur RPM du canal, s'il existe.
+/// Speed read from the channel RPM sensor, if any.
 pub fn channel_rpm(channel: &FanChannel, readings: &[Reading]) -> Option<f32> {
     let id = channel.rpm_sensor.as_deref()?;
     readings.iter().find(|r| r.id == id).map(|r| r.value)
 }
 
-/// Ventilateur branché : piloté, ou qui tourne. Sans mesure RPM on ne peut pas trancher : branché.
+/// Fan plugged in: controlled, or spinning. Without an RPM reading we cannot tell: plugged in.
 pub fn fan_connected(rpm: Option<f32>, piloted: bool) -> bool {
     piloted || rpm.is_none_or(|rpm| rpm >= 1.0)
 }
 
-/// Canal de pompe : même règle que le service (« Pump Fan » sur MSI, `pump` ailleurs).
+/// Pump channel: same rule as the service ("Pump Fan" on MSI, `pump` elsewhere).
 pub fn is_pump(channel: &FanChannel) -> bool {
     [&channel.label, &channel.id]
         .iter()
         .any(|text| text.to_lowercase().contains("pump"))
 }
 
-/// Nom affiché d'un canal : nom personnalisé, sinon libellé matériel.
+/// Displayed channel name: custom name, otherwise hardware label.
 pub fn display_name(config: Option<&Config>, channel: &FanChannel) -> String {
     config
         .and_then(|c| c.fan_labels.get(&channel.id))
@@ -135,7 +135,7 @@ pub fn display_name(config: Option<&Config>, channel: &FanChannel) -> String {
         .unwrap_or_else(|| channel.label.clone())
 }
 
-/// Famille d'un canal, pour grouper la liste (ordre d'affichage).
+/// Channel family, to group the list (display order).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FanGroup {
     Motherboard,
@@ -148,15 +148,15 @@ impl FanGroup {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::Motherboard => "Carte mère",
+            Self::Motherboard => "Motherboard",
             Self::Gpu => "GPU",
             Self::Watercooling => "Watercooling",
         }
     }
 }
 
-/// Famille déduite de l'id du canal (`gpu0/fan0`, `nct6687/pwm1`, `aio/pump`…).
-/// Les puces Super I/O ont des noms variés : tout id inconnu est rangé « Carte mère ».
+/// Family inferred from the channel id (`gpu0/fan0`, `nct6687/pwm1`, `aio/pump`...).
+/// Super I/O chips have varied names: any unknown id goes to "Motherboard".
 pub fn fan_group(channel_id: &str) -> FanGroup {
     let id = channel_id.to_ascii_lowercase();
     if id.starts_with("gpu") {
@@ -171,7 +171,7 @@ pub fn fan_group(channel_id: &str) -> FanGroup {
     }
 }
 
-/// Réglages du canal dans le profil actif (Auto par défaut).
+/// Channel settings in the active profile (Auto by default).
 pub fn settings_for(config: &Config, channel: &str) -> FanSettings {
     config
         .active()
@@ -180,23 +180,23 @@ pub fn settings_for(config: &Config, channel: &str) -> FanSettings {
         .unwrap_or_default()
 }
 
-/// Réglages modifiables du canal dans le profil actif (créés si absents).
+/// Mutable channel settings in the active profile (created if missing).
 pub fn settings_mut<'a>(config: &'a mut Config, channel: &str) -> Option<&'a mut FanSettings> {
     active_mut(config).map(|p| p.fans.entry(channel.to_owned()).or_default())
 }
 
-/// Profil actif modifiable.
+/// Mutable active profile.
 fn active_mut(config: &mut Config) -> Option<&mut Profile> {
     let active = config.active_profile.clone();
     config.profiles.iter_mut().find(|p| p.name == active)
 }
 
-/// Remet un canal en Auto (BIOS) dans le profil actif. `true` si quelque chose a changé.
+/// Puts a channel back to Auto (BIOS) in the active profile. `true` if something changed.
 pub fn reset_fan(config: &mut Config, channel: &str) -> bool {
     active_mut(config).is_some_and(|p| p.fans.remove(channel).is_some())
 }
 
-/// Vide le profil actif : tous ses canaux repassent en Auto (BIOS). `true` si quelque chose a changé.
+/// Clears the active profile: all its channels go back to Auto (BIOS). `true` if something changed.
 pub fn reset_active_profile(config: &mut Config) -> bool {
     active_mut(config).is_some_and(|p| {
         let changed = !p.fans.is_empty();
@@ -205,7 +205,7 @@ pub fn reset_active_profile(config: &mut Config) -> bool {
     })
 }
 
-/// Sources de température proposées : chaque capteur de température, plus « Max CPU/GPU ».
+/// Offered temperature sources: every temperature sensor, plus "Max CPU/GPU".
 pub fn temp_sources(readings: &[Reading]) -> Vec<(String, TempSource)> {
     let temps = readings
         .iter()
@@ -225,19 +225,19 @@ pub fn temp_sources(readings: &[Reading]) -> Vec<(String, TempSource)> {
     sources
 }
 
-/// Nom de profil valide : non vide et pas déjà pris.
+/// Valid profile name: not empty and not already taken.
 fn check_new_name(config: &Config, name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("Saisissez un nom de profil.".into());
+        return Err("Enter a profile name.".into());
     }
     if config.profiles.iter().any(|p| p.name == name) {
-        return Err(format!("Le profil « {name} » existe déjà."));
+        return Err(format!("Profile \"{name}\" already exists."));
     }
     Ok(name.to_owned())
 }
 
-/// Copie le profil actif sous un nouveau nom et l'active.
+/// Copies the active profile under a new name and activates it.
 pub fn duplicate_active(config: &mut Config, name: &str) -> Result<(), String> {
     let name = check_new_name(config, name)?;
     let fans = config.active().map(|p| p.fans.clone()).unwrap_or_default();
@@ -249,19 +249,19 @@ pub fn duplicate_active(config: &mut Config, name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Renomme le profil actif.
+/// Renames the active profile.
 pub fn rename_active(config: &mut Config, name: &str) -> Result<(), String> {
     let name = check_new_name(config, name)?;
-    let profile = active_mut(config).ok_or("Aucun profil actif.")?;
+    let profile = active_mut(config).ok_or("No active profile.")?;
     profile.name.clone_from(&name);
     config.active_profile = name;
     Ok(())
 }
 
-/// Supprime un profil (jamais le dernier) ; le profil actif retombe sur le premier restant.
+/// Deletes a profile (never the last one); the active profile falls back to the first remaining.
 pub fn delete_profile(config: &mut Config, name: &str) -> Result<(), String> {
     if config.profiles.len() <= 1 {
-        return Err("Impossible de supprimer le dernier profil.".into());
+        return Err("Cannot delete the last profile.".into());
     }
     config.profiles.retain(|p| p.name != name);
     if config.active_profile == name {
@@ -305,8 +305,8 @@ mod tests {
     fn display_name_prefers_custom_label() {
         let mut config = Config::default();
         assert_eq!(display_name(Some(&config), &channel("a")), "Fan a");
-        config.fan_labels.insert("a".into(), "Avant".into());
-        assert_eq!(display_name(Some(&config), &channel("a")), "Avant");
+        config.fan_labels.insert("a".into(), "Front".into());
+        assert_eq!(display_name(Some(&config), &channel("a")), "Front");
         assert_eq!(display_name(None, &channel("a")), "Fan a");
     }
 
@@ -318,7 +318,7 @@ mod tests {
             s.mode = FanMode::Fixed { duty: 40 };
         }
         assert_eq!(settings_for(&config, "a").mode, FanMode::Fixed { duty: 40 });
-        config.active_profile = "Silencieux".into();
+        config.active_profile = "Silent".into();
         assert_eq!(settings_for(&config, "a").mode, FanMode::Auto);
     }
 
@@ -336,16 +336,16 @@ mod tests {
             draft.poll_interval_ms = 1500;
         }
         assert!(state.dirty());
-        // Changement de profil côté daemon : l'édition locale est conservée.
-        let switched = Config { active_profile: "Silencieux".into(), ..Config::default() };
+        // Profile switch on the daemon side: the local edit is kept.
+        let switched = Config { active_profile: "Silent".into(), ..Config::default() };
         state.receive(DaemonMsg::State {
             config: switched.clone(),
             channels: channels.clone(),
         });
         let draft = state.draft.clone().unwrap_or_default();
         assert_eq!(draft.poll_interval_ms, 1500);
-        assert_eq!(draft.active_profile, "Silencieux");
-        // Après « Appliquer », la réponse du daemon remplace le brouillon.
+        assert_eq!(draft.active_profile, "Silent");
+        // After "Apply", the daemon answer replaces the draft.
         state.pending_apply = true;
         state.receive(DaemonMsg::State {
             config: switched,
@@ -373,22 +373,22 @@ mod tests {
     fn profile_operations() {
         let mut config = Config::default();
         assert!(duplicate_active(&mut config, "  ").is_err());
-        assert!(duplicate_active(&mut config, "Silencieux").is_err());
-        assert!(duplicate_active(&mut config, "Jeu").is_ok());
-        assert_eq!(config.active_profile, "Jeu");
-        assert!(rename_active(&mut config, "Jeux").is_ok());
-        assert_eq!(config.active_profile, "Jeux");
-        assert!(config.profiles.iter().any(|p| p.name == "Jeux"));
-        assert!(delete_profile(&mut config, "Jeux").is_ok());
+        assert!(duplicate_active(&mut config, "Silent").is_err());
+        assert!(duplicate_active(&mut config, "Gaming").is_ok());
+        assert_eq!(config.active_profile, "Gaming");
+        assert!(rename_active(&mut config, "Games").is_ok());
+        assert_eq!(config.active_profile, "Games");
+        assert!(config.profiles.iter().any(|p| p.name == "Games"));
+        assert!(delete_profile(&mut config, "Games").is_ok());
         assert_eq!(config.active_profile, config.profiles[0].name);
         let mut single = Config {
             profiles: vec![Profile {
-                name: "Seul".into(),
+                name: "Only".into(),
                 fans: Default::default(),
             }],
             ..Config::default()
         };
-        assert!(delete_profile(&mut single, "Seul").is_err());
+        assert!(delete_profile(&mut single, "Only").is_err());
     }
 
     #[test]
@@ -404,13 +404,13 @@ mod tests {
         assert!(reset_active_profile(&mut config));
         assert!(config.active().is_some_and(|p| p.fans.is_empty()));
         assert!(!reset_active_profile(&mut config));
-        // Les autres profils ne sont pas touchés.
-        config.active_profile = "Silencieux".into();
+        // Other profiles are left untouched.
+        config.active_profile = "Silent".into();
         settings_mut(&mut config, "a");
         config.active_profile = "Performance".into();
         settings_mut(&mut config, "a");
         assert!(reset_active_profile(&mut config));
-        config.active_profile = "Silencieux".into();
+        config.active_profile = "Silent".into();
         assert!(config.active().is_some_and(|p| p.fans.contains_key("a")));
     }
 

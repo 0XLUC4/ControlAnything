@@ -1,4 +1,4 @@
-//! Page « Éclairage » : luminosité globale, synchronisation et effet de chaque zone RGB.
+//! "Lighting" page: global brightness, sync and effect of each RGB zone.
 
 use gpui_kit::component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
@@ -17,16 +17,16 @@ use crate::fans::waiting;
 use crate::state::temp_sources;
 use crate::widgets::{choice, field, hex, muted, section, stepper};
 
-/// Libellés des effets, dans l'ordre des index de [`default_effect`].
+/// Effect labels, in the index order of [`default_effect`].
 const EFFECTS: [&str; 8] = [
-    "Laisser le firmware",
-    "Éteint",
-    "Statique",
-    "Respiration",
-    "Arc-en-ciel",
-    "Vague",
-    "Température",
-    "Charge",
+    "Firmware default",
+    "Off",
+    "Static",
+    "Breathing",
+    "Rainbow",
+    "Wave",
+    "Temperature",
+    "Load",
 ];
 const BLUE: Rgb = Rgb::new(0x25, 0x63, 0xeb);
 const PURPLE: Rgb = Rgb::new(0x93, 0x33, 0xea);
@@ -34,22 +34,22 @@ const GREEN: Rgb = Rgb::new(0x16, 0xa3, 0x4a);
 const RED: Rgb = Rgb::new(0xdc, 0x26, 0x26);
 const PERIOD_STEP: u32 = 500;
 const PERIOD_MAX: u32 = 60_000;
-/// Pas des seuils de température et écart minimal entre min et max (°C).
+/// Temperature threshold step and minimum gap between min and max (°C).
 const TEMP_STEP: f32 = 5.0;
 const TEMP_MAX: f32 = 110.0;
 
-/// État de la page qui survit à la fermeture de la fenêtre.
+/// Page state that outlives the window.
 #[derive(Default)]
 pub struct LightingPage {
-    /// Zone éditée, clé `"{device_id}/{zone_id}"` (ignorée en mode synchronisé).
+    /// Edited zone, key `"{device_id}/{zone_id}"` (ignored in sync mode).
     pub selected: Option<String>,
 }
 
-/// Contrôles à état de la page ; leur valeur est recopiée depuis le brouillon à chaque rendu.
+/// Stateful page controls; their value is copied from the draft on each render.
 #[derive(Clone)]
 pub struct LightingControls {
     brightness: Entity<SliderState>,
-    /// Une couleur par emplacement (couleur, froid/chaud, bas/haut…).
+    /// One color per slot (color, cold/hot, low/high...).
     colors: [Entity<ColorPickerState>; 2],
 }
 
@@ -84,12 +84,12 @@ impl LightingControls {
     }
 }
 
-/// Clé d'une zone dans `RgbConfig::zones`.
+/// Key of a zone in `RgbConfig::zones`.
 fn zone_key(device: &str, zone: &str) -> String {
     format!("{device}/{zone}")
 }
 
-/// Effet par défaut de chaque entrée de [`EFFECTS`].
+/// Default effect of each [`EFFECTS`] entry.
 fn default_effect(index: usize) -> Effect {
     match index {
         1 => Effect::Off,
@@ -134,23 +134,23 @@ fn effect_index(effect: &Effect) -> usize {
     }
 }
 
-/// Couleurs réglables d'un effet (au plus deux), avec leur libellé.
+/// Adjustable colors of an effect (at most two), with their label.
 fn colors(effect: &Effect) -> Vec<(&'static str, Rgb)> {
     match effect {
-        Effect::Static { color } | Effect::Breathing { color, .. } => vec![("Couleur", *color)],
-        Effect::Wave { colors, .. } => ["Couleur 1", "Couleur 2"]
+        Effect::Static { color } | Effect::Breathing { color, .. } => vec![("Color", *color)],
+        Effect::Wave { colors, .. } => ["Color 1", "Color 2"]
             .into_iter()
             .zip(colors.iter().copied())
             .collect(),
         Effect::Temperature { cold, hot, .. } => {
-            vec![("Couleur à froid", *cold), ("Couleur à chaud", *hot)]
+            vec![("Cold color", *cold), ("Hot color", *hot)]
         }
-        Effect::Load { low, high, .. } => vec![("Charge basse", *low), ("Charge haute", *high)],
+        Effect::Load { low, high, .. } => vec![("Low load", *low), ("High load", *high)],
         _ => Vec::new(),
     }
 }
 
-/// Remplace la couleur de l'emplacement `slot` (voir [`colors`]).
+/// Replaces the color of slot `slot` (see [`colors`]).
 fn set_color(effect: &mut Effect, slot: usize, rgb: Rgb) {
     let target = match (effect, slot) {
         (Effect::Static { color } | Effect::Breathing { color, .. }, 0) => color,
@@ -176,7 +176,7 @@ fn period(effect: &Effect) -> Option<u32> {
     }
 }
 
-/// Allonge ou raccourcit la période d'animation d'un pas.
+/// Lengthens or shortens the animation period by one step.
 fn step_period(effect: &mut Effect, up: bool) {
     if let Effect::Breathing { period_ms, .. }
     | Effect::Rainbow { period_ms }
@@ -190,7 +190,7 @@ fn step_period(effect: &mut Effect, up: bool) {
     }
 }
 
-/// Décale un seuil de température en gardant `min + TEMP_STEP <= max`.
+/// Shifts a temperature threshold keeping `min + TEMP_STEP <= max`.
 fn step_temp(effect: &mut Effect, max_bound: bool, up: bool) {
     if let Effect::Temperature {
         min_temp, max_temp, ..
@@ -205,7 +205,7 @@ fn step_temp(effect: &mut Effect, max_bound: bool, up: bool) {
     }
 }
 
-/// Effet édité : l'effet synchronisé s'il existe, sinon celui de la zone (absent = firmware).
+/// Edited effect: the sync effect if any, otherwise the zone one (missing = firmware).
 fn current_effect(rgb: &RgbConfig, zone: Option<&str>) -> Option<Effect> {
     match &rgb.sync {
         Some(effect) => Some(effect.clone()),
@@ -213,7 +213,7 @@ fn current_effect(rgb: &RgbConfig, zone: Option<&str>) -> Option<Effect> {
     }
 }
 
-/// Modifie l'effet édité ; une zone revenue au firmware est retirée (absent = firmware).
+/// Edits the current effect; a zone back to firmware is removed (missing = firmware).
 fn edit_rgb(rgb: &mut RgbConfig, zone: Option<&str>, edit: impl FnOnce(&mut Effect)) {
     if let Some(effect) = rgb.sync.as_mut() {
         edit(effect);
@@ -236,7 +236,7 @@ fn from_hsla(color: Hsla) -> Rgb {
     Rgb::new(channel(color.r), channel(color.g), channel(color.b))
 }
 
-/// Recopie le brouillon dans les contrôles à état (sans effet s'ils sont déjà à jour).
+/// Copies the draft into the stateful controls (no effect if already up to date).
 fn sync_controls(
     controls: &LightingControls,
     brightness: u8,
@@ -275,12 +275,12 @@ impl HubApp {
         let devices = self.state.rgb_devices.clone();
         if devices.is_empty() {
             return muted(
-                "Aucun appareil RGB détecté (MSI Center doit être fermé)",
+                "No RGB device detected (close MSI Center)",
                 cx,
             )
             .into_any_element();
         }
-        // Zone éditée : la première tant qu'aucune zone existante n'est choisie.
+        // Edited zone: the first one until an existing zone is chosen.
         let keys: Vec<String> = devices
             .iter()
             .flat_map(|d| d.zones.iter().map(|z| zone_key(&d.id, &z.id)))
@@ -297,9 +297,9 @@ impl HubApp {
         let effect_colors = effect.as_ref().map(colors).unwrap_or_default();
         sync_controls(&controls, rgb.brightness, &effect_colors, window, cx);
 
-        let general = section("Général", cx)
+        let general = section("General", cx)
             .child(field(
-                "Luminosité",
+                "Brightness",
                 h_flex()
                     .gap_3()
                     .child(div().w(px(260.)).child(Slider::new(&controls.brightness)))
@@ -312,7 +312,7 @@ impl HubApp {
                 cx,
             ))
             .child(field(
-                "Synchroniser tout",
+                "Sync all",
                 Switch::new("rgb-sync")
                     .checked(rgb.sync.is_some())
                     .on_click(cx.listener(|app, checked: &bool, _, cx| {
@@ -323,7 +323,7 @@ impl HubApp {
             ));
 
         let mut page = v_flex().gap_4().max_w(px(760.)).child(general);
-        let mut title = "Effet synchronisé (tous les appareils)".to_owned();
+        let mut title = "Synced effect (all devices)".to_owned();
         if rgb.sync.is_none() {
             let mut index = 0usize;
             for device in &devices {
@@ -332,7 +332,7 @@ impl HubApp {
                     let key = zone_key(&device.id, &zone.id);
                     let selected = self.lighting.selected.as_ref() == Some(&key);
                     if selected {
-                        title = format!("{} — {}", device.label, zone.label);
+                        title = format!("{}: {}", device.label, zone.label);
                     }
                     let current = rgb.zones.get(&key).map_or(0, effect_index);
                     let button = choice(("rgb-zone", index), EFFECTS[current], selected).on_click(
@@ -382,7 +382,7 @@ impl HubApp {
         );
         if *effect == Effect::Firmware {
             editor = editor.child(muted(
-                "Le service n'écrit rien : l'éclairage d'origine est conservé.",
+                "The service writes nothing: the original lighting is kept.",
                 cx,
             ));
         }
@@ -395,7 +395,7 @@ impl HubApp {
         }
         if let Some(period_ms) = period(effect) {
             editor = editor.child(field(
-                "Période",
+                "Period",
                 stepper(
                     "rgb-period",
                     format!("{period_ms} ms"),
@@ -439,7 +439,7 @@ impl HubApp {
                         cx,
                     ))
                     .child(field(
-                        "Température froide",
+                        "Cold temperature",
                         stepper(
                             "rgb-min-temp",
                             unit.format(*min_temp, 0),
@@ -453,7 +453,7 @@ impl HubApp {
                         cx,
                     ))
                     .child(field(
-                        "Température chaude",
+                        "Hot temperature",
                         stepper(
                             "rgb-max-temp",
                             unit.format(*max_temp, 0),
@@ -488,7 +488,7 @@ impl HubApp {
                     })
                     .collect::<Vec<_>>();
                 editor = editor.child(field(
-                    "Capteur",
+                    "Sensor",
                     h_flex().flex_wrap().gap_2().children(sensors),
                     cx,
                 ));
@@ -513,7 +513,7 @@ mod tests {
                 ..RgbConfig::default()
             };
             assert!(config.validate().is_ok(), "{label}");
-            assert_eq!(config.sync, Some(effect), "défaut déjà normalisé");
+            assert_eq!(config.sync, Some(effect), "default already normalized");
         }
     }
 
@@ -532,7 +532,7 @@ mod tests {
         );
         edit_rgb(&mut rgb, zone, |e| *e = Effect::Firmware);
         assert!(rgb.zones.is_empty());
-        // Mode synchronisé : seule `sync` est modifiée.
+        // Sync mode: only `sync` is changed.
         rgb.sync = Some(Effect::Off);
         edit_rgb(&mut rgb, zone, |e| *e = default_effect(4));
         assert_eq!(rgb.sync, Some(Effect::Rainbow { period_ms: 5000 }));
@@ -546,7 +546,7 @@ mod tests {
         set_color(&mut wave, 2, RED);
         assert_eq!(
             colors(&wave),
-            vec![("Couleur 1", BLUE), ("Couleur 2", GREEN)]
+            vec![("Color 1", BLUE), ("Color 2", GREEN)]
         );
         let mut temp = default_effect(6);
         set_color(&mut temp, 1, GREEN);
@@ -560,7 +560,7 @@ mod tests {
             ..
         } = temp
         else {
-            panic!("température attendue");
+            panic!("temperature expected");
         };
         assert_eq!((hot, min_temp, max_temp), (GREEN, 75.0, 80.0));
         let mut rainbow = default_effect(4);
