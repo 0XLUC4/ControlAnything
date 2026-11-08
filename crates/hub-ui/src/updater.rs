@@ -4,7 +4,7 @@
 //! The NSIS installer stops the service and the running app, then restarts both (`/P /R`).
 //! An installer is only run when its size and the SHA-256 published by GitHub match.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gpui_kit::Context;
@@ -35,6 +35,10 @@ pub struct Release {
 pub struct UpdateState {
     newer: Arc<Mutex<Option<Release>>>,
     busy: Arc<AtomicBool>,
+    /// Bytes of the installer written so far (download progress bar).
+    downloaded: Arc<AtomicU64>,
+    /// "Update and restart" was clicked and the download or install runs.
+    downloading: bool,
     /// Result of the last action, shown in the update popup.
     message: Option<String>,
 }
@@ -78,6 +82,14 @@ pub fn release(state: &UpdateState) -> Option<Release> {
     state.newer()
 }
 
+/// Download progress in percent, `None` when no download runs.
+pub fn download_progress(state: &UpdateState) -> Option<f32> {
+    let size = state.newer()?.size;
+    state
+        .downloading
+        .then(|| state.downloaded.load(Ordering::Relaxed) as f32 * 100. / size as f32)
+}
+
 /// A check or download runs: the buttons show a spinner and ignore clicks.
 pub fn busy(state: &UpdateState) -> bool {
     state.busy.load(Ordering::Relaxed)
@@ -117,16 +129,22 @@ pub fn install_latest(app: &mut HubApp, cx: &mut Context<HubApp>) {
     if busy(&app.update) {
         return;
     }
-    app.update.message = Some(format!("Downloading v{}...", release.version));
+    app.update.message = None;
+    app.update.downloading = true;
+    let downloaded = app.update.downloaded.clone();
+    downloaded.store(0, Ordering::Relaxed);
     run_busy(
         app,
         cx,
-        move || install(&release),
-        |app, result, cx| match result {
-            // The installer closes the app anyway; quitting now avoids its prompt.
-            Ok(true) => cx.quit(),
-            Ok(false) => app.update.message = Some("Update cancelled.".into()),
-            Err(err) => app.update.message = Some(err),
+        move || install(&release, &downloaded),
+        |app, result, cx| {
+            app.update.downloading = false;
+            match result {
+                // The installer closes the app anyway; quitting now avoids its prompt.
+                Ok(true) => cx.quit(),
+                Ok(false) => app.update.message = Some("Update cancelled.".into()),
+                Err(err) => app.update.message = Some(err),
+            }
         },
     );
     cx.notify();
@@ -226,14 +244,28 @@ fn shorten(text: &str, max: usize) -> String {
 
 /// Downloads the installer into a fresh folder, checks it, then starts it.
 /// `Ok(false)`: the user declined the UAC prompt.
-fn install(release: &Release) -> Result<bool, String> {
+fn install(release: &Release, downloaded: &AtomicU64) -> Result<bool, String> {
     remove_stale_dirs();
     let dir = std::env::temp_dir().join(format!("{DIR_PREFIX}{:016x}", random_u64()));
     // create_dir (not create_dir_all) fails if the folder already exists.
     std::fs::create_dir(&dir).map_err(|err| format!("cannot create the download folder: {err}"))?;
     let path = dir.join("setup.exe");
     let path_text = path.to_string_lossy().into_owned();
-    let result = curl(&["--max-time", "600", "-o", &path_text, &release.url])
+    let finished = AtomicBool::new(false);
+    // A side thread reports the file size while curl writes it (progress bar).
+    let fetched = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while !finished.load(Ordering::Relaxed) {
+                let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+                downloaded.store(size, Ordering::Relaxed);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
+        let fetched = curl(&["--max-time", "600", "-o", &path_text, &release.url]);
+        finished.store(true, Ordering::Relaxed);
+        fetched
+    });
+    let result = fetched
         .and_then(|_| verify(release, &path_text))
         .and_then(|()| launch(&path_text));
     if !matches!(result, Ok(true)) {

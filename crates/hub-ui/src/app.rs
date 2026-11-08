@@ -10,6 +10,7 @@ use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::popover::Popover;
+use gpui_kit::component::progress::Progress;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
@@ -470,12 +471,16 @@ impl HubApp {
             .anchor(Anchor::TopRight)
             .trigger(trigger)
             .content(move |_, _, cx| {
-                let (status, release, busy) = {
+                let (status, release, busy, progress) = {
                     let state = &app.read(cx).update;
-                    (updater::status(state), updater::release(state), updater::busy(state))
+                    (
+                        updater::status(state),
+                        updater::release(state),
+                        updater::busy(state),
+                        updater::download_progress(state),
+                    )
                 };
                 let muted = cx.theme().muted_foreground;
-                let current = format!("You have {}.", updater::CURRENT);
                 let action = app.clone();
                 let body = match release {
                     Some(release) => v_flex()
@@ -486,45 +491,63 @@ impl HubApp {
                                 .font_semibold()
                                 .child(format!("ControlAnything {} is available", release.version)),
                         )
-                        .child(div().text_xs().text_color(muted).child(current))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(format!("You have {}.", updater::CURRENT)),
+                        )
                         .when(!release.notes.is_empty(), |col| {
                             col.child(div().text_sm().child(release.notes))
                         })
-                        .child(
-                            Button::new("update-install")
-                                .primary()
-                                .w_full()
-                                .label("Update and restart")
-                                .loading(busy)
-                                .disabled(busy)
-                                .on_click(move |_, _, cx| {
-                                    action.update(cx, updater::install_latest);
-                                }),
-                        )
+                        .map(|col| match progress {
+                            Some(percent) => col
+                                .child(Progress::new("update-progress").value(percent))
+                                .child(div().text_xs().text_color(muted).child("Downloading...")),
+                            None => col.child(
+                                Button::new("update-install")
+                                    .primary()
+                                    .w_full()
+                                    .label("Update and restart")
+                                    .disabled(busy)
+                                    .on_click(move |_, _, cx| {
+                                        action.update(cx, updater::install_latest);
+                                    }),
+                            ),
+                        })
                         .child(div().text_xs().text_color(muted).child(
                             "Fans return to firmware control while the service restarts.",
                         )),
-                    None => v_flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_base()
-                                .font_semibold()
-                                .child("ControlAnything is up to date"),
-                        )
-                        .child(div().text_xs().text_color(muted).child(current))
-                        .child(
-                            Button::new("update-refresh")
-                                .outline()
-                                .w_full()
-                                .icon(IconName::RefreshCw)
-                                .label("Check again")
-                                .loading(busy)
-                                .disabled(busy)
-                                .on_click(move |_, _, cx| {
-                                    action.update(cx, updater::check);
-                                }),
-                        ),
+                    None => v_flex().child(
+                        h_flex()
+                            .justify_between()
+                            .gap_4()
+                            .child(
+                                v_flex()
+                                    .child(
+                                        div()
+                                            .text_base()
+                                            .font_semibold()
+                                            .child("You're up to date"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(muted)
+                                            .child(format!("ControlAnything {}", updater::CURRENT)),
+                                    ),
+                            )
+                            .child(
+                                Button::new("update-refresh")
+                                    .ghost()
+                                    .icon(IconName::RefreshCw)
+                                    .tooltip("Check again")
+                                    .loading(busy)
+                                    .on_click(move |_, _, cx| {
+                                        action.update(cx, updater::check);
+                                    }),
+                            ),
+                    ),
                 };
                 body.w(px(300.)).when_some(status, |col, status| {
                     col.child(div().text_xs().text_color(muted).child(status))
