@@ -106,7 +106,11 @@ pub fn run(
     live: broadcast::Sender<String>,
     state: watch::Sender<String>,
 ) {
-    let mut devices: Vec<Driven> = hub_rgb::detect()
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut found = hub_rgb::detect();
+    #[cfg(windows)]
+    found.extend(crate::providers::corsair_dram());
+    let mut devices: Vec<Driven> = found
         .into_iter()
         .map(|device| Driven {
             device,

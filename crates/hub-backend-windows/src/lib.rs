@@ -1,15 +1,18 @@
 //! Windows backend via the PawnIO driver: Intel CPU temperature (IntelMSR module),
-//! Nuvoton NCT6687D Super I/O (LpcIO module) and read-only Intel PCH SMBus (SmbusI801 module).
+//! Nuvoton NCT6687D Super I/O (LpcIO module), Intel PCH SMBus (SmbusI801 module) and the
+//! Corsair DRAM RGB controllers on it.
 #![cfg(windows)]
 
 use std::path::Path;
 
 use hub_core::{Device, HwError, Reading, SensorKind, SensorProvider};
 
+mod corsair_dram;
 mod nct6687;
 mod pawnio;
 mod smbus_i801;
 
+pub use corsair_dram::{CorsairDram, detect_corsair_dram};
 pub use nct6687::{Nct6687Fans, Nct6687Sensors, open_nct6687};
 pub use smbus_i801::SmbusI801;
 use pawnio::PawnIo;

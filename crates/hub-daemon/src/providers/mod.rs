@@ -62,6 +62,28 @@ fn push_fans<C: FanController + 'static>(fans: &mut Fans, name: &str, result: Re
     }
 }
 
+/// Corsair DRAM RGB controllers on the Intel PCH SMBus; failures are logged and skipped.
+#[cfg(windows)]
+pub fn corsair_dram() -> Vec<Box<dyn hub_core::rgb::RgbDevice>> {
+    let found = match hub_backend_windows::detect_corsair_dram(&pawnio_dir().join("SmbusI801.bin")) {
+        Ok(found) => found,
+        Err(err) => {
+            tracing::warn!("SMBus unavailable, no Corsair DRAM RGB: {err}");
+            return Vec::new();
+        }
+    };
+    found
+        .into_iter()
+        .filter_map(|(address, result)| match result {
+            Ok(dimm) => Some(Box::new(dimm) as Box<dyn hub_core::rgb::RgbDevice>),
+            Err(err) => {
+                tracing::warn!("Corsair DRAM {address:#04x} unavailable: {err}");
+                None
+            }
+        })
+        .collect()
+}
+
 /// PawnIO modules shipped next to the executable (`<exe dir>/pawnio/`); in debug, falls back to
 /// the repo `assets/pawnio/` so that `cargo run` works.
 #[cfg(windows)]
